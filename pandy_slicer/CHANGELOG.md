@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1
+
+- A 3MF that isn't a Bambu Studio project gets a clear error instead of a dropped connection ("502 Bad Gateway"
+  through Home Assistant).
+
 ## 1.1.0
 
 - Pandy reaches the add-on through Home Assistant (ingress): no address or port to set up, and it works wherever

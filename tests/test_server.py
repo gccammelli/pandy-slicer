@@ -121,6 +121,18 @@ class TokenTest(unittest.TestCase):
             server.TOKEN = old
 
 
+
+class NotAProjectTest(unittest.TestCase):
+    def test_a_plain_3mf_is_refused_with_a_reason(self):
+        h = server.Handler.__new__(server.Handler)
+        body = zip_of({"3D/3dmodel.model": "<model/>"})
+        h.path, h.client_address, h.sent = "/slice?plate=1&printer=Bambu+Lab+X1+Carbon+0.4+nozzle", (server.INGRESS_PROXY, 1), []
+        h.headers, h.rfile = {"Content-Length": str(len(body))}, io.BytesIO(body)
+        h._json = lambda code, obj: h.sent.append((code, obj))
+        h.do_POST()
+        self.assertEqual(422, h.sent[0][0])
+        self.assertIn("Bambu Studio project", h.sent[0][1]["error"])
+
 if __name__ == "__main__":
     unittest.main()
 

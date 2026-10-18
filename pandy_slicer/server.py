@@ -390,6 +390,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(504, {"error": "Slicing took too long"})
         except RuntimeError as e:
             return self._json(422, {"error": str(e)})
+        except (zipfile.BadZipFile, KeyError):
+            return self._json(422, {"error": "That isn't a Bambu Studio project: print a MakerWorld profile (its 3MF has the settings)"})
         finally:
             LOCK.release()
         name = safe_name(q.get("name", "model"))
