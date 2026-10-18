@@ -26,8 +26,9 @@ x86-64 only (Bambu Studio is published for x86-64 Linux). About 2 GB of disk.
 [![Add repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fgccammelli%2Fpandy-slicer)
 
 Or by hand: Settings › Add-ons › Add-on store › ⋮ › **Repositories**, add `https://github.com/gccammelli/pandy-slicer`.
-Then install **Pandy Slicer** and start it (the first start downloads Bambu Studio: give it a few minutes). In Pandy:
-Me › Settings › **Slicer for MakerWorld prints** → your Home Assistant's address with port **8737**.
+Then install **Pandy Slicer** and start it (the first start downloads Bambu Studio: give it a few minutes). Pandy
+finds it through Home Assistant by itself (Home Assistant's ingress), so there's no address to enter and no port to
+open: it works wherever Pandy reaches Home Assistant. Pandy's Home Assistant user must be an administrator.
 
 ## Install: Docker, anywhere
 
@@ -37,7 +38,7 @@ cd pandy-slicer
 docker compose up -d
 ```
 
-Then in Pandy enter `<that computer's IP>:8737`. To require a token, set `PANDY_SLICER_TOKEN` in
+Then in Pandy (Me › Settings › **Slicer for MakerWorld prints**) enter `<that computer's IP>:8737`. To require a token, set `PANDY_SLICER_TOKEN` in
 `docker-compose.yml` (or the add-on's **token** option) and enter the same one in Pandy. Don't expose port 8737 to the
 internet.
 
@@ -50,7 +51,8 @@ internet.
 | `&printer=<preset>` | re-target to that Bambu printer preset first, e.g. `Bambu Lab X1 Carbon 0.4 nozzle` |
 | `&upload=1` | also put it on the printer: headers `X-Printer-Ip`, `X-Printer-Serial`, `X-Printer-Code`; answers `{"path": "cache/<name>.gcode.3mf", "plates": […]}` |
 
-With a token set, send `Authorization: Bearer <token>`. One slice at a time.
+With a token set, send `Authorization: Bearer <token>` (not needed through Home Assistant's ingress, which checks who
+is asking itself). One slice at a time.
 
 ## Development
 

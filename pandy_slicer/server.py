@@ -9,7 +9,8 @@ POST /slice?plate=1&upload=1   same, then puts the file on the printer over FTPS
                                {"path": "cache/<name>.gcode.3mf", "plate": 1, ...}; the printer's address, serial and
                                access code come in the X-Printer-Ip, X-Printer-Serial and X-Printer-Code headers.
 
-If PANDY_SLICER_TOKEN is set, requests need "Authorization: Bearer <token>". One slice runs at a time.
+If PANDY_SLICER_TOKEN is set, requests need "Authorization: Bearer <token>", except through Home Assistant's ingress,
+where Home Assistant has already checked who is asking. One slice runs at a time.
 Standard library only.
 """
 import ftplib
@@ -27,6 +28,8 @@ import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+# Home Assistant's ingress proxy: the only client with this address, and it lets through only signed-in users.
+INGRESS_PROXY = "172.30.32.2"
 BAMBU = os.environ.get("BAMBU_STUDIO", "/opt/bambu-studio/AppRun")
 PORT = int(os.environ.get("PANDY_SLICER_PORT", "8737"))
 TOKEN = os.environ.get("PANDY_SLICER_TOKEN", "").strip()
@@ -342,7 +345,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(obj).encode())
 
     def _authorized(self):
-        if not TOKEN:
+        if not TOKEN or self.client_address[0] == INGRESS_PROXY:
             return True
         if self.headers.get("Authorization", "") == f"Bearer {TOKEN}":
             return True
@@ -350,7 +353,13 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def do_GET(self):
-        if urlparse(self.path).path == "/health":
+        path = urlparse(self.path).path
+        if path == "/":  # Home Assistant's "Open web UI"
+            if self._authorized():
+                self._send(200, b"<!doctype html><meta name=viewport content='width=device-width'><body style='font:16px sans-serif;padding:24px'>"
+                            b"<h2>Pandy Slicer is running</h2><p>Bambu Studio " + VERSION.encode() + b". Pandy finds it through Home Assistant: "
+                            b"in Pandy, open a MakerWorld model and tap Print.</p>", "text/html; charset=utf-8")
+        elif path == "/health":
             if self._authorized():
                 self._json(200, {"ok": True, "version": VERSION})
         else:

@@ -6,9 +6,9 @@ a Bambu Lab printer in LAN-only mode (where Bambu's cloud slicing isn't availabl
 ## Set up
 
 1. Start the add-on. The first start builds it, which downloads Bambu Studio (about 220 MB): give it a few minutes.
-2. Optional: set a **token** below and restart, so only Pandy can use it.
-3. In Pandy: **Me › Settings › Slicer for MakerWorld prints**: your Home Assistant's address with port **8737**
-   (for example `homeassistant.local:8737` or its IP), and the token if you set one. **Save** checks it answers.
+2. That's it. Pandy (with this Home Assistant added) reaches the add-on through Home Assistant: no address, port or
+   token to enter. In Pandy, **Me › Settings › Slicer for MakerWorld prints › Check the add-on** confirms it answers.
+   Pandy's Home Assistant user must be an administrator.
 
 ## Using it
 
@@ -20,9 +20,10 @@ starts.
 
 | Option | |
 |---|---|
-| `token` | Optional. When set, requests need it (Pandy sends it). |
+| `token` | Optional, for direct access only: requests on port 8737 need it. Not needed through Home Assistant. |
 
-The add-on listens on port 8737. Don't forward that port to the internet.
+Port 8737 is off by default: Pandy doesn't need it. Turn it on (Network, below) only for an app that can't go through
+Home Assistant, and don't forward it to the internet.
 
 ## Limits
 

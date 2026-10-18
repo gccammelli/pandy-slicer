@@ -103,5 +103,24 @@ class PicturesTest(unittest.TestCase):
         self.assertNotIn("3D/model", names)
 
 
+
+class TokenTest(unittest.TestCase):
+    def authorized(self, ip, header=""):
+        h = server.Handler.__new__(server.Handler)
+        h.client_address, h.headers, h.sent = (ip, 1), {"Authorization": header}, []
+        h._json = lambda code, obj: h.sent.append(code)
+        return h._authorized()
+
+    def test_token_is_required_directly_but_not_through_home_assistant(self):
+        old, server.TOKEN = server.TOKEN, "secret"
+        try:
+            self.assertFalse(self.authorized("203.0.113.9"))
+            self.assertTrue(self.authorized("203.0.113.9", "Bearer secret"))
+            self.assertTrue(self.authorized(server.INGRESS_PROXY))
+        finally:
+            server.TOKEN = old
+
+
 if __name__ == "__main__":
     unittest.main()
+

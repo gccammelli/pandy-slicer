@@ -1,5 +1,5 @@
 name: Pandy Slicer
-version: "1.0.1"
+version: "1.1.0"
 slug: pandy_slicer
 description: Slices MakerWorld models with Bambu Studio so the Pandy app can print them.
 url: https://github.com/gccammelli/pandy-slicer
@@ -9,10 +9,14 @@ arch:
 init: false
 startup: application
 boot: auto
+# Pandy reaches the slicer through Home Assistant (ingress), signed in with Home Assistant's own token.
+ingress: true
+ingress_port: 8737
+# Off by default: only for apps that can't go through Home Assistant. Turn it on under the add-on's Network settings.
 ports:
-  8737/tcp: 8737
+  8737/tcp: null
 ports_description:
-  8737/tcp: Pandy Slicer (the address you give Pandy)
+  8737/tcp: Direct access, without Home Assistant (not needed by Pandy)
 options:
   token: ""
 schema:
