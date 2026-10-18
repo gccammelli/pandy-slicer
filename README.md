@@ -59,6 +59,10 @@ python3 -m unittest discover tests     # the slicer's own logic, no Bambu Studio
 docker build -t pandy-slicer pandy_slicer
 ```
 
+Every Monday a workflow checks for a new Bambu Studio release. When there is one, it moves the add-on to it, checks it
+builds and Bambu Studio starts, and opens a pull request with the end-to-end checks to do before merging. Merging
+releases it to Home Assistant.
+
 ## Credits
 
 [Bambu Studio](https://github.com/bambulab/BambuStudio) (AGPL-3.0), downloaded unmodified at build time. Bambu's CA

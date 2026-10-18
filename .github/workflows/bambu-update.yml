@@ -1,0 +1,81 @@
+# Every Monday: when Bambu Studio has a new release, moves the add-on to it, checks it builds and starts, and opens a
+# pull request for an end-to-end test (see its description) before it's merged and reaches Home Assistant.
+name: Bambu Studio update
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency: bambu-studio-update
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Newer Bambu Studio?
+        id: bump
+        run: python .github/scripts/bambu_update.py >> "$GITHUB_OUTPUT"
+      # Any pull request for this version, even a closed one (a version deliberately skipped), means it's handled.
+      - name: Already proposed?
+        id: open
+        if: steps.bump.outputs.version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          if [ -n "$(gh pr list --state all --search "\"Bambu Studio $VERSION\" in:title" --json number --jq '.[].number')" ]; then
+            echo "exists=1" >> "$GITHUB_OUTPUT"
+          fi
+      # A pull request opened with this workflow's token doesn't start the Build workflow, so its checks run here.
+      - name: Tests
+        if: steps.bump.outputs.version && !steps.open.outputs.exists
+        run: python -m unittest discover tests -v
+      - name: Build the add-on image (amd64)
+        if: steps.bump.outputs.version && !steps.open.outputs.exists
+        run: docker build -t pandy-slicer pandy_slicer
+      - name: Bambu Studio starts in it
+        id: starts
+        if: steps.bump.outputs.version && !steps.open.outputs.exists
+        run: |
+          {
+            echo 'help<<EOF'
+            docker run --rm pandy-slicer /opt/bambu-studio/AppRun --help | head -1
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+      - name: Open the pull request
+        if: steps.bump.outputs.version && !steps.open.outputs.exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.bump.outputs.version }}
+          ADDON: ${{ steps.bump.outputs.addon }}
+          HELP: ${{ steps.starts.outputs.help }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "bambu-studio-$VERSION-${{ github.run_number }}"
+          git commit -qam "$ADDON: Bambu Studio $VERSION"
+          git push -q origin HEAD
+          cat > body.md <<EOF
+          Bambu Studio $VERSION is out ([release notes](https://github.com/bambulab/BambuStudio/releases/tag/v$VERSION)).
+          This moves the add-on to it as $ADDON.
+
+          Checked here: the slicer's tests pass, the image builds, and Bambu Studio starts in it (\`$HELP\`).
+
+          Before merging, test end to end on a real printer:
+          - [ ] Install this branch's add-on (or the image) and check it in Pandy: Me › Settings › Slicer › Check the add-on.
+          - [ ] Print a MakerWorld profile made for this printer: it slices, uploads and starts.
+          - [ ] Print a profile made for another printer (converted): same, and the first layer looks right.
+          - [ ] The sliced file keeps the plate picture and the filament mapping.
+
+          Merging releases it: Home Assistant offers the update (or installs it, with auto-update on).
+          EOF
+          gh pr create --title "Bambu Studio $VERSION" --body-file body.md --base main --head "bambu-studio-$VERSION-${{ github.run_number }}"
