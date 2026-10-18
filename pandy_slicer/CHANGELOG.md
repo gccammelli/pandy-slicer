@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- Installs on Home Assistant: the Ubuntu base is set in the Dockerfile (Home Assistant ignored the old build.yaml
+  and built on Alpine).
+
 ## 1.0.0
 
 - Slices 3MF projects (MakerWorld print profiles) with Bambu Studio 02.08.02.61's command line, and puts the result
