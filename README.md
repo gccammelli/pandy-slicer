@@ -1,7 +1,5 @@
 # Pandy Slicer
 
-[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/cammelli)
-
 Bambu Studio's slicer in a container, so the [Pandy](https://github.com/gccammelli/pandy) app can print MakerWorld
 models on a Bambu Lab printer in **LAN-only mode**, where Bambu's cloud slicing isn't available.
 
@@ -67,3 +65,5 @@ docker build -t pandy-slicer pandy_slicer
 certificates from the [Home Assistant Bambu Lab integration](https://github.com/greghesp/ha-bambulab) (MIT).
 
 Developed by Giancarlo Cammelli. MIT licence. Like it? [Buy me a coffee](https://buymeacoffee.com/cammelli).
+
+[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/cammelli)
