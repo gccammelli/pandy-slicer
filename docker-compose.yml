@@ -1,0 +1,11 @@
+# Pandy Slicer without Home Assistant: `docker compose up -d` in this folder, then give Pandy http://<this machine>:8737.
+services:
+  pandy-slicer:
+    build: ./pandy_slicer
+    image: pandy-slicer
+    restart: unless-stopped
+    ports:
+      - "8737:8737"
+    environment:
+      # Optional: set a token and enter the same one in Pandy.
+      PANDY_SLICER_TOKEN: ""

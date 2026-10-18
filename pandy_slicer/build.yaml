@@ -1,0 +1,2 @@
+build_from:
+  amd64: ubuntu:24.04

@@ -1,0 +1,19 @@
+name: Pandy Slicer
+version: "1.0.0"
+slug: pandy_slicer
+description: Slices MakerWorld models with Bambu Studio so the Pandy app can print them.
+url: https://github.com/gccammelli/pandy-slicer
+# Bambu Studio is only published for x86-64 Linux.
+arch:
+  - amd64
+init: false
+startup: application
+boot: auto
+ports:
+  8737/tcp: 8737
+ports_description:
+  8737/tcp: Pandy Slicer (the address you give Pandy)
+options:
+  token: ""
+schema:
+  token: password?
