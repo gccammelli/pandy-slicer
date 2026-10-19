@@ -9,13 +9,14 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -26,19 +27,41 @@ jobs:
           python -m coverage run --source=pandy_slicer -m unittest discover tests -v
           python -m coverage xml
       - name: Upload coverage
-        uses: codecov/codecov-action@v5
+        uses: actions/upload-artifact@v4
         with:
-          files: coverage.xml
-          flags: python-unit
-          fail_ci_if_error: false
-          use_oidc: true
+          name: coverage
+          path: coverage.xml
+          retention-days: 1
 
   image:
     runs-on: ubuntu-latest
     needs: test
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Build the add-on image (amd64)
         run: docker build -t pandy-slicer pandy_slicer
       - name: Bambu Studio starts in it
         run: docker run --rm pandy-slicer /opt/bambu-studio/AppRun --help | head -1
+
+  coverage:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          flags: python-unit
+          fail_ci_if_error: false
+          use_oidc: true
