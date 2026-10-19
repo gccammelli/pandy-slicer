@@ -1,5 +1,11 @@
 # Pandy Slicer
 
+[![Build](https://github.com/gccammelli/pandy-slicer/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/gccammelli/pandy-slicer/actions/workflows/build.yml)
+[![Coverage](https://codecov.io/gh/gccammelli/pandy-slicer/graph/badge.svg)](https://codecov.io/gh/gccammelli/pandy-slicer)
+[![Latest release](https://img.shields.io/github/v/release/gccammelli/pandy-slicer)](https://github.com/gccammelli/pandy-slicer/releases/latest)
+[![License](https://img.shields.io/github/license/gccammelli/pandy-slicer)](LICENSE)
+[![Open issues](https://img.shields.io/github/issues/gccammelli/pandy-slicer)](https://github.com/gccammelli/pandy-slicer/issues)
+
 Bambu Studio's slicer in a container, so the [Pandy](https://github.com/gccammelli/pandy) app can print MakerWorld
 models on a Bambu Lab printer in **LAN-only mode**, where Bambu's cloud slicing isn't available.
 
@@ -62,6 +68,10 @@ docker build -t pandy-slicer pandy_slicer
 Every Monday a workflow checks for a new Bambu Studio release. When there is one, it moves the add-on to it, checks it
 builds and Bambu Studio starts, and opens a pull request with the end-to-end checks to do before merging. Merging
 releases it to Home Assistant.
+
+## Contributing
+
+Bug reports, feature requests and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for tests, privacy rules and the required before/after visual evidence for user-facing changes.
 
 ## Credits
 

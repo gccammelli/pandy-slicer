@@ -7,6 +7,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -15,7 +19,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m unittest discover tests -v
+      - name: Tests with coverage
+        run: |
+          python3 .github/scripts/public_issue_patch.py --self-test
+          python -m pip install coverage==7.16.2
+          python -m coverage run --source=pandy_slicer -m unittest discover tests -v
+          python -m coverage xml
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          flags: python-unit
+          fail_ci_if_error: false
+          use_oidc: true
 
   image:
     runs-on: ubuntu-latest
