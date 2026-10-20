@@ -9,12 +9,14 @@ POST /slice?plate=1&upload=1   same, then puts the file on the printer over FTPS
                                {"path": "cache/<name>.gcode.3mf", "plate": 1, ...}; the printer's address, serial and
                                access code come in the X-Printer-Ip, X-Printer-Serial and X-Printer-Code headers.
 
-If PANDY_SLICER_TOKEN is set, requests need "Authorization: Bearer <token>", except through Home Assistant's ingress,
-where Home Assistant has already checked who is asking. One slice runs at a time.
+Requests need "Authorization: Bearer <PANDY_SLICER_TOKEN>", except through Home Assistant's ingress, where Home
+Assistant has already checked who is asking; with no token set, only ingress is let in. upload=1 is accepted only through
+ingress, so the printer's access code never crosses the network in plain HTTP. One slice runs at a time.
 Standard library only.
 """
 import ftplib
 import glob
+import hmac
 import io
 import json
 import os
@@ -35,9 +37,19 @@ PORT = int(os.environ.get("PANDY_SLICER_PORT", "8737"))
 TOKEN = os.environ.get("PANDY_SLICER_TOKEN", "").strip()
 # As a Home Assistant add-on, the token is set in the add-on's Configuration tab.
 if os.path.exists("/data/options.json"):
-    with open("/data/options.json") as _f:
-        TOKEN = (json.load(_f).get("token") or TOKEN).strip()
+    try:
+        with open("/data/options.json") as _f:
+            TOKEN = (json.load(_f).get("token") or TOKEN).strip()
+    except (OSError, ValueError) as _e:  # without the token, only ingress is let in
+        print(f"Couldn't read the add-on options: {_e}")
 MAX_BYTES = 200 * 1024 * 1024
+# Unpacked size limits for uploaded projects, so a small zip can't inflate into gigabytes in memory.
+MAX_UNZIPPED = 1024 * 1024 * 1024
+MAX_ENTRIES = 5000
+# Bambu printers' highest settable temperatures (H2D nozzle 350 °C, beds 120 °C, chamber 65 °C).
+MAX_NOZZLE, MAX_BED, MAX_CHAMBER = 350, 120, 65
+# Open connections at once: one slices, the others wait their turn or get "busy".
+MAX_CONNECTIONS = 4
 SLICE_TIMEOUT = int(os.environ.get("PANDY_SLICER_TIMEOUT", "900"))
 LOCK = threading.Lock()
 
@@ -56,15 +68,34 @@ PROFILES = os.path.join(BBL, "machine")
 GCODE_KEYS = ("machine_start_gcode", "machine_end_gcode", "change_filament_gcode", "layer_change_gcode", "time_lapse_gcode")
 
 
+def preset_path(folder: str, name: str):
+    """The path of Bambu Studio preset [name] in [folder], or None if there's no such preset. Names come from uploaded
+    projects and query strings, so anything that isn't a plain file name in that folder is refused."""
+    if not name or name != os.path.basename(name) or name.startswith(".") or "\0" in name:
+        return None
+    path = os.path.join(folder, f"{name}.json")
+    return path if os.path.isfile(path) else None
+
+
+def check_zip(data: bytes):
+    """Refuses a project that would unpack to more than [MAX_UNZIPPED] bytes or [MAX_ENTRIES] files."""
+    infos = zipfile.ZipFile(io.BytesIO(data)).infolist()
+    if len(infos) > MAX_ENTRIES or sum(i.file_size for i in infos) > MAX_UNZIPPED:
+        raise RuntimeError("That project unpacks to too much data to slice safely")
+
+
 def system_gcodes(machine: str) -> dict:
     """The custom G-codes of a Bambu system printer preset ("Bambu Lab X1 Carbon 0.4 nozzle"), following its includes
     (newer presets keep them in separate template files, which the command line doesn't read)."""
     out = {}
+    path = preset_path(PROFILES, machine)
+    if not path:
+        return out
     try:
-        with open(os.path.join(PROFILES, f"{machine}.json")) as f:
+        with open(path) as f:
             d = json.load(f)
         for inc in d.get("include", []):
-            with open(os.path.join(PROFILES, f"{inc}.json")) as f:
+            with open(preset_path(PROFILES, inc) or os.devnull) as f:
                 out.update({k: v for k, v in json.load(f).items() if k in GCODE_KEYS})
         out.update({k: v for k, v in d.items() if k in GCODE_KEYS and v})
     except (OSError, ValueError):
@@ -82,13 +113,13 @@ def conversion(data: bytes, target: str):
     source = cfg.get("printer_settings_id", "")
     if not target or source == target:
         return [], None
-    try:
-        with open(os.path.join(PROFILES, f"{target}.json")) as f:
-            machine = json.load(f)
-    except OSError:
+    path = preset_path(PROFILES, target)
+    if not path:
         raise RuntimeError(f"Bambu Studio has no printer preset called {target}")
+    with open(path) as f:
+        machine = json.load(f)
     for inc in machine.pop("include", []):
-        with open(os.path.join(PROFILES, f"{inc}.json")) as f:
+        with open(preset_path(PROFILES, inc) or os.devnull) as f:
             machine.update({k: v for k, v in json.load(f).items() if k not in ("name", "instantiation")})
     # Presets are found by name inside Bambu Studio's profile folders, so the merged ones are written there.
     machine_file = os.path.join(PROFILES, f"pandy {target}.json")
@@ -115,22 +146,20 @@ def conversion(data: bytes, target: str):
 
 
 def heal(data: bytes) -> bytes:
-    """Fills in a project's empty printer G-codes (start, end, filament change…) from its system printer preset. Projects
-    built on the command line from stock presets miss them, and printing without start G-code skips homing, leveling
-    and the purge line."""
+    """Replaces a project's printer G-codes (start, end, filament change…) with its system printer preset's. A project
+    from the internet is untrusted, and these templates run as-is on the printer; projects built on the command line
+    from stock presets also miss them, and printing without start G-code skips homing, leveling and the purge line.
+    Projects on a printer preset Bambu Studio doesn't have keep theirs, and [check_safe] still checks the result."""
     z = zipfile.ZipFile(io.BytesIO(data))
     try:
         cfg = json.loads(z.read("Metadata/project_settings.config"))
     except (KeyError, ValueError):
         return data
-    missing = [k for k in GCODE_KEYS if len(str(cfg.get(k) or "")) < 100]
-    if not missing:
-        return data
     fill = system_gcodes(cfg.get("printer_settings_id", ""))
-    changed = {k: fill[k] for k in missing if fill.get(k)}
+    changed = {k: fill[k] for k in GCODE_KEYS if fill.get(k) and cfg.get(k) != fill[k]}
     if not changed:
         return data
-    print(f"Filled in {', '.join(changed)} from '{cfg.get('printer_settings_id')}'")
+    print(f"Used the system {', '.join(changed)} of '{cfg.get('printer_settings_id')}'")
     cfg.update(changed)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as out:
@@ -194,10 +223,14 @@ def set_bed_type(data: bytes, plate: int, bed_type: str) -> bytes:
     return out.getvalue()
 
 
+TEMPERATURE = re.compile(r"^(M10[49]|M14[01]|M19[01])\b[^;\n]*?\bS(-?\d+(?:\.\d+)?)", re.M)
+LIMITS = {"M104": MAX_NOZZLE, "M109": MAX_NOZZLE, "M140": MAX_BED, "M190": MAX_BED, "M141": MAX_CHAMBER, "M191": MAX_CHAMBER}
+
+
 def check_safe(sliced: bytes):
     """Refuses a sliced file whose plates lack Bambu's printer start sequence (homing, leveling, purge line,
     calibrations), recognised by its G29 and M1002 commands: a placeholder start G-code makes the printer go straight
-    to the first layer."""
+    to the first layer. Also refuses nozzle, bed or chamber temperatures above any Bambu printer's limits."""
     z = zipfile.ZipFile(io.BytesIO(sliced))
     for n in z.namelist():
         if re.fullmatch(r"Metadata/plate_\d+\.gcode", n):
@@ -207,10 +240,15 @@ def check_safe(sliced: bytes):
             if not (re.search(r"^G28\b", head, re.M) and re.search(r"^(G29|M1002)\b", head, re.M)):
                 raise RuntimeError("The sliced file lacks the printer's start sequence (homing, bed leveling, purge "
                                    "line), so it isn't safe to print. The profile is missing its printer settings.")
+            for m in TEMPERATURE.finditer(g):
+                if float(m.group(2)) > LIMITS[m.group(1)]:
+                    raise RuntimeError(f"The sliced file sets {m.group(1)} S{m.group(2)}, beyond the printer's limit, "
+                                       "so it isn't safe to print.")
 
 
 def slice_3mf(data: bytes, plate: int, target: str = "", bed_type: str = "auto"):
     """Slices one plate (0 = all) and returns (sliced 3mf bytes, summary dict). Raises RuntimeError with Bambu's message."""
+    check_zip(data)
     work = tempfile.mkdtemp(prefix="pandy-")
     try:
         src = os.path.join(work, "model.3mf")
@@ -301,11 +339,11 @@ class ImplicitFtps(ftplib.FTP_TLS):
 
 
 def printer_context(serial: str):
-    """Checks the printer's certificate against Bambu's CAs (shipped next to this file) and its serial."""
-    ctx = ssl.create_default_context()
+    """Checks the printer's certificate against Bambu's CAs (shipped next to this file) only, and its serial."""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
     for c in glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "certs", "*.cert")):
         ctx.load_verify_locations(c)
-    ctx.check_hostname = False
     ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
     return ctx
 
@@ -344,12 +382,16 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, code, obj):
         self._send(code, json.dumps(obj).encode())
 
+    def _ingress(self):
+        return self.client_address[0] == INGRESS_PROXY
+
     def _authorized(self):
-        if not TOKEN or self.client_address[0] == INGRESS_PROXY:
+        if self._ingress():
             return True
-        if self.headers.get("Authorization", "") == f"Bearer {TOKEN}":
+        if TOKEN and hmac.compare_digest(self.headers.get("Authorization", "").encode(), f"Bearer {TOKEN}".encode()):
             return True
-        self._json(401, {"error": "Wrong or missing token"})
+        self._json(401, {"error": "Wrong or missing token" if TOKEN else "Set a token (PANDY_SLICER_TOKEN, or the add-on's "
+                         "token option) to use the slicer without Home Assistant"})
         return False
 
     def do_GET(self):
@@ -372,19 +414,23 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorized():
             return
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
-        length = int(self.headers.get("Content-Length", "0"))
-        if not 0 < length <= MAX_BYTES:
-            return self._json(400, {"error": "Send the .3mf as the request body (up to 200 MB)"})
-        data = self.rfile.read(length)
-        if not data.startswith(b"PK"):
-            return self._json(400, {"error": "That isn't a 3MF file"})
+        if q.get("upload") == "1" and not self._ingress():
+            return self._json(400, {"error": "Uploading to the printer works only through Home Assistant; without it, "
+                                    "slice without upload=1 and send the file to the printer yourself"})
         try:
+            length = int(self.headers.get("Content-Length", "0"))
             plate = int(q.get("plate", "1"))
         except ValueError:
-            return self._json(400, {"error": "plate must be a number"})
+            return self._json(400, {"error": "Content-Length and plate must be numbers"})
+        if not 0 < length <= MAX_BYTES:
+            return self._json(400, {"error": "Send the .3mf as the request body (up to 200 MB)"})
+        # The lock comes before reading the body, so only one upload is ever held in memory.
         if not LOCK.acquire(timeout=SLICE_TIMEOUT):
             return self._json(503, {"error": "Busy slicing something else"})
         try:
+            data = self.rfile.read(length)
+            if not data.startswith(b"PK"):
+                return self._json(400, {"error": "That isn't a 3MF file"})
             sliced, info = slice_3mf(data, plate, q.get("printer", ""), q.get("bed_type", "auto"))
         except subprocess.TimeoutExpired:
             return self._json(504, {"error": "Slicing took too long"})
@@ -411,7 +457,26 @@ class Handler(BaseHTTPRequestHandler):
         print(f"{self.address_string()} {fmt % args}")
 
 
+class Server(ThreadingHTTPServer):
+    """Closes connections beyond [MAX_CONNECTIONS] at once instead of starting a thread for each."""
+    daemon_threads = True
+    slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+
+    def process_request(self, request, client_address):
+        if not self.slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
+
+
 if __name__ == "__main__":
     VERSION = version()
-    print(f"Pandy Slicer on port {PORT}, Bambu Studio {VERSION}, token {'on' if TOKEN else 'off'}")
-    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    print(f"Pandy Slicer on port {PORT}, Bambu Studio {VERSION}, "
+          f"{'token on' if TOKEN else 'no token: only Home Assistant ingress is let in'}")
+    Server(("0.0.0.0", PORT), Handler).serve_forever()

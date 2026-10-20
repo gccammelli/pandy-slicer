@@ -1,5 +1,11 @@
 # Pandy Slicer
 
+[![Build](https://github.com/gccammelli/pandy-slicer/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/gccammelli/pandy-slicer/actions/workflows/build.yml)
+[![Coverage](https://codecov.io/gh/gccammelli/pandy-slicer/graph/badge.svg)](https://codecov.io/gh/gccammelli/pandy-slicer)
+[![Latest release](https://img.shields.io/github/v/release/gccammelli/pandy-slicer)](https://github.com/gccammelli/pandy-slicer/releases/latest)
+[![License](https://img.shields.io/github/license/gccammelli/pandy-slicer)](LICENSE)
+[![Open issues](https://img.shields.io/github/issues/gccammelli/pandy-slicer)](https://github.com/gccammelli/pandy-slicer/issues)
+
 Bambu Studio's slicer in a container, so the [Pandy](https://github.com/gccammelli/pandy) app can print MakerWorld
 models on a Bambu Lab printer in **LAN-only mode**, where Bambu's cloud slicing isn't available.
 
@@ -33,12 +39,13 @@ open: it works wherever Pandy reaches Home Assistant. Pandy's Home Assistant use
 ```
 git clone https://github.com/gccammelli/pandy-slicer
 cd pandy-slicer
+echo "PANDY_SLICER_TOKEN=$(openssl rand -hex 24)" > .env
 docker compose up -d
 ```
 
-Then in Pandy (Me › Settings › **Slicer for MakerWorld prints**) enter `<that computer's IP>:8737`. To require a token, set `PANDY_SLICER_TOKEN` in
-`docker-compose.yml` (or the add-on's **token** option) and enter the same one in Pandy. Don't expose port 8737 to the
-internet.
+Then in Pandy (Me › Settings › **Slicer for MakerWorld prints**) enter `<that computer's IP>:8737` and the token from
+`.env`. The token is required: without one the slicer refuses every request that doesn't come through Home Assistant.
+Don't expose port 8737 to the internet.
 
 ## API
 
@@ -47,10 +54,11 @@ internet.
 | `GET /health` | `{"ok": true, "version": "<Bambu Studio version>"}` |
 | `POST /slice?plate=1&name=<name>` | body: the 3MF; answers the sliced `.gcode.3mf`, with a JSON summary in `X-Pandy-Result` |
 | `&printer=<preset>` | re-target to that Bambu printer preset first, e.g. `Bambu Lab X1 Carbon 0.4 nozzle` |
-| `&upload=1` | also put it on the printer: headers `X-Printer-Ip`, `X-Printer-Serial`, `X-Printer-Code`; answers `{"path": "cache/<name>.gcode.3mf", "plates": […]}` |
+| `&upload=1` | also put it on the printer: headers `X-Printer-Ip`, `X-Printer-Serial`, `X-Printer-Code`; answers `{"path": "cache/<name>.gcode.3mf", "plates": […]}`. Only through Home Assistant's ingress, so the access code never travels in plain HTTP; directly, download the sliced file and send it to the printer yourself |
 
-With a token set, send `Authorization: Bearer <token>` (not needed through Home Assistant's ingress, which checks who
-is asking itself). One slice at a time.
+Send `Authorization: Bearer <token>` (not needed through Home Assistant's ingress, which checks who is asking itself).
+One slice at a time. The slicer always uses Bambu's own printer G-code (start, end, filament change) for the
+project's printer, and refuses sliced files with temperatures beyond any Bambu printer's limits.
 
 ## Development
 
@@ -62,6 +70,10 @@ docker build -t pandy-slicer pandy_slicer
 Every Monday a workflow checks for a new Bambu Studio release. When there is one, it moves the add-on to it, checks it
 builds and Bambu Studio starts, and opens a pull request with the end-to-end checks to do before merging. Merging
 releases it to Home Assistant.
+
+## Contributing
+
+Bug reports, feature requests and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for tests, privacy rules and the required before/after visual evidence for user-facing changes.
 
 ## Credits
 

@@ -7,5 +7,6 @@ services:
     ports:
       - "8737:8737"
     environment:
-      # Optional: set a token and enter the same one in Pandy.
-      PANDY_SLICER_TOKEN: ""
+      # Required: without a token the slicer refuses every request. Put a long random one in .env next to this file
+      # (PANDY_SLICER_TOKEN=..., e.g. from `openssl rand -hex 24`) and enter the same one in Pandy.
+      PANDY_SLICER_TOKEN: ${PANDY_SLICER_TOKEN:?Set PANDY_SLICER_TOKEN in .env}

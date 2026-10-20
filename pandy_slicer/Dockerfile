@@ -5,6 +5,8 @@ FROM ubuntu:24.04
 
 ARG BAMBU_VERSION=02.08.02.61
 ARG BAMBU_ASSET=BambuStudio_ubuntu24.04-v02.08.02.61-20260820225108.AppImage
+# The asset's SHA-256 as GitHub reports it (the release API's "digest"): a swapped download fails the build.
+ARG BAMBU_SHA256=d501b103fac5424513ec0e8d6bc145fb30719de2c7d94d7320d723740c81a7fd
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates curl python3 \
@@ -17,11 +19,16 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 
 # The AppImage unpacks without FUSE.
 RUN curl -fsSL -o /tmp/bs.AppImage "https://github.com/bambulab/BambuStudio/releases/download/v${BAMBU_VERSION}/${BAMBU_ASSET}" \
+    && echo "${BAMBU_SHA256}  /tmp/bs.AppImage" | sha256sum -c - \
     && chmod +x /tmp/bs.AppImage && cd /opt && /tmp/bs.AppImage --appimage-extract >/dev/null \
     && mv squashfs-root bambu-studio && rm /tmp/bs.AppImage
 
 ENV LANG=en_US.UTF-8 BAMBU_STUDIO=/opt/bambu-studio/AppRun PANDY_SLICER_PORT=8737
 COPY server.py /server.py
 COPY certs /certs
+# Untrusted projects are parsed by Bambu Studio, so it runs as an unprivileged user. It writes the merged printer
+# presets into its own profile folders, so those belong to that user.
+RUN useradd --system --create-home --uid 10001 pandy && chown -R pandy /opt/bambu-studio/resources/profiles
+USER pandy
 EXPOSE 8737
 CMD ["python3", "-u", "/server.py"]

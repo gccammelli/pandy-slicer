@@ -20,7 +20,7 @@ starts.
 
 | Option | |
 |---|---|
-| `token` | Optional, for direct access only: requests on port 8737 need it. Not needed through Home Assistant. |
+| `token` | For direct access only: requests on port 8737 need it, and without a token port 8737 refuses everything. Not needed through Home Assistant. |
 
 Port 8737 is off by default: Pandy doesn't need it. Turn it on (Network, below) only for an app that can't go through
 Home Assistant, and don't forward it to the internet.

@@ -1,4 +1,7 @@
 __pycache__/
 *.pyc
+.coverage
+coverage.xml
 CLAUDE.md
 .claude/
+.env

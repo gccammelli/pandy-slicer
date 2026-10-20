@@ -36,6 +36,21 @@ class SafetyTest(unittest.TestCase):
     def test_accepts_bambus_start_sequence(self):
         server.check_safe(zip_of({"Metadata/plate_1.gcode": gcode(START)}))
 
+    def test_refuses_temperatures_beyond_the_printers_limits(self):
+        with self.assertRaises(RuntimeError):
+            server.check_safe(zip_of({"Metadata/plate_1.gcode": gcode(START + "M104 S999\n")}))
+        with self.assertRaises(RuntimeError):
+            server.check_safe(zip_of({"Metadata/plate_1.gcode": gcode(START) + "M190 S150\n"}))
+        server.check_safe(zip_of({"Metadata/plate_1.gcode": gcode(START + "M104 S220\nM140 S55\nM1002 S999\n; M104 S999\n")}))
+
+    def test_refuses_a_zip_that_unpacks_too_large(self):
+        old, server.MAX_UNZIPPED = server.MAX_UNZIPPED, 10
+        try:
+            with self.assertRaises(RuntimeError):
+                server.check_zip(zip_of({"a": "x" * 100}))
+        finally:
+            server.MAX_UNZIPPED = old
+
     def test_names_are_safe(self):
         self.assertEqual("Cube + Sphere.gcode.3mf", server.safe_name("../Cube + Sphere.3mf"))
         self.assertEqual("a_b.gcode.3mf", server.safe_name("a;b.gcode.3mf"))
@@ -88,6 +103,20 @@ class PresetsTest(unittest.TestCase):
         self.assertEqual(["Bambu Lab X1 Carbon 0.4 nozzle"], process["compatible_printers"])
         self.assertIn("--load-filaments", args)
 
+    def test_replaces_the_projects_own_printer_gcode(self):
+        healed = server.heal(self.project(printer_settings_id="Bambu Lab X1 Carbon 0.4 nozzle", machine_start_gcode="M104 S999\n" * 50))
+        cfg = json.loads(zipfile.ZipFile(io.BytesIO(healed)).read("Metadata/project_settings.config"))
+        self.assertNotIn("S999", cfg["machine_start_gcode"])
+
+    def test_preset_names_cannot_leave_the_profiles_folder(self):
+        with open(os.path.join(self.tmp.name, "secret.json"), "w") as f:
+            json.dump({"machine_start_gcode": "leak"}, f)
+        for name in ("../secret", "/etc/passwd", "..", ".hidden", ""):
+            self.assertIsNone(server.preset_path(server.PROFILES, name))
+        self.assertEqual({}, server.system_gcodes("../secret"))
+        with self.assertRaises(RuntimeError):
+            server.conversion(self.project(printer_settings_id="Bambu Lab A1 0.4 nozzle"), "../secret")
+
     def test_same_printer_needs_no_conversion(self):
         self.assertEqual(([], None), server.conversion(self.project(printer_settings_id="Bambu Lab X1 Carbon 0.4 nozzle"),
                                                        "Bambu Lab X1 Carbon 0.4 nozzle"))
@@ -117,6 +146,16 @@ class TokenTest(unittest.TestCase):
             self.assertFalse(self.authorized("203.0.113.9"))
             self.assertTrue(self.authorized("203.0.113.9", "Bearer secret"))
             self.assertTrue(self.authorized(server.INGRESS_PROXY))
+            self.assertFalse(self.authorized("203.0.113.9", "Bearer secreT"))
+        finally:
+            server.TOKEN = old
+
+    def test_without_a_token_only_home_assistant_is_let_in(self):
+        old, server.TOKEN = server.TOKEN, ""
+        try:
+            self.assertFalse(self.authorized("10.20.30.40"))
+            self.assertFalse(self.authorized("10.20.30.40", "Bearer "))
+            self.assertTrue(self.authorized(server.INGRESS_PROXY))
         finally:
             server.TOKEN = old
 
@@ -132,6 +171,22 @@ class NotAProjectTest(unittest.TestCase):
         h.do_POST()
         self.assertEqual(422, h.sent[0][0])
         self.assertIn("Bambu Studio project", h.sent[0][1]["error"])
+
+class UploadTest(unittest.TestCase):
+    def test_printer_upload_is_refused_outside_home_assistant(self):
+        old, server.TOKEN = server.TOKEN, "secret"
+        try:
+            h = server.Handler.__new__(server.Handler)
+            h.path, h.client_address, h.sent = "/slice?plate=1&upload=1", ("10.20.30.40", 1), []
+            h.headers = {"Authorization": "Bearer secret", "Content-Length": "4", "X-Printer-Code": "12345678"}
+            h.rfile = io.BytesIO(b"PK..")
+            h._json = lambda code, obj: h.sent.append((code, obj))
+            h.do_POST()
+            self.assertEqual(400, h.sent[0][0])
+            self.assertEqual(b"PK..", h.rfile.read())  # refused before reading the body
+        finally:
+            server.TOKEN = old
+
 
 if __name__ == "__main__":
     unittest.main()

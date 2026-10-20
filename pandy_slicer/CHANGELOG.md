@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0
+
+- A token is now required for direct access (port 8737); without one, only Home Assistant's ingress is let in.
+- Uploading to the printer (`upload=1`) works only through Home Assistant, so the access code never travels in plain HTTP.
+- The project's printer G-code is always replaced with Bambu's own for that printer, and sliced files with temperatures
+  beyond Bambu printers' limits are refused.
+- Printer presets are looked up by name only, uploads are size-checked before unpacking, and at most 4 connections are
+  served at once.
+- The printer's certificate is checked against Bambu's certificates only.
+- Bambu Studio's download is checked against its SHA-256, and the slicer runs as an unprivileged user.
+
 ## 1.1.1
 
 - A 3MF that isn't a Bambu Studio project gets a clear error instead of a dropped connection ("502 Bad Gateway"

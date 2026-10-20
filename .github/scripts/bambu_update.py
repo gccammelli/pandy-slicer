@@ -34,15 +34,19 @@ def main():
     if release.get("draft") or release.get("prerelease"):
         return
     version = release["tag_name"].lstrip("v")
-    asset = next((a["name"] for a in release.get("assets", []) if ASSET.fullmatch(a["name"]) and f"-v{version}-" in a["name"]), None)
+    asset = next((a for a in release.get("assets", []) if ASSET.fullmatch(a["name"]) and f"-v{version}-" in a["name"]), None)
     docker = open(DOCKERFILE).read()
     current = re.search(r"^ARG BAMBU_VERSION=(\S+)$", docker, re.M).group(1)
     if numbers(version) <= numbers(current):
         return
     if asset is None:
         sys.exit(f"Bambu Studio {version} has no Ubuntu 24.04 AppImage: {[a['name'] for a in release.get('assets', [])]}")
+    digest = re.fullmatch(r"sha256:([0-9a-f]{64})", asset.get("digest") or "")
+    if digest is None:
+        sys.exit(f"Bambu Studio {version}'s AppImage has no SHA-256 digest to pin")
     docker = re.sub(r"^ARG BAMBU_VERSION=\S+$", f"ARG BAMBU_VERSION={version}", docker, flags=re.M)
-    docker = re.sub(r"^ARG BAMBU_ASSET=\S+$", f"ARG BAMBU_ASSET={asset}", docker, flags=re.M)
+    docker = re.sub(r"^ARG BAMBU_ASSET=\S+$", f"ARG BAMBU_ASSET={asset['name']}", docker, flags=re.M)
+    docker = re.sub(r"^ARG BAMBU_SHA256=\S+$", f"ARG BAMBU_SHA256={digest.group(1)}", docker, flags=re.M)
     open(DOCKERFILE, "w").write(docker)
 
     config = open(CONFIG).read()

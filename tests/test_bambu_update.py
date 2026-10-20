@@ -26,11 +26,17 @@ class BambuUpdateTest(unittest.TestCase):
     def test_moves_to_a_newer_release(self):
         p, read = self.run_with({"tag_name": "v99.00.00.01", "assets": [
             {"name": "BambuStudio_ubuntu22.04-v99.00.00.01-20990101.AppImage"},
-            {"name": "BambuStudio_ubuntu24.04-v99.00.00.01-20990101000000.AppImage"}]})
+            {"name": "BambuStudio_ubuntu24.04-v99.00.00.01-20990101000000.AppImage", "digest": "sha256:" + "ab" * 32}]})
         self.assertEqual(0, p.returncode, p.stderr)
         self.assertIn("version=99.00.00.01", p.stdout)
         self.assertIn("ARG BAMBU_ASSET=BambuStudio_ubuntu24.04-v99.00.00.01-20990101000000.AppImage", read("Dockerfile"))
+        self.assertIn("ARG BAMBU_SHA256=" + "ab" * 32, read("Dockerfile"))
         self.assertIn("- Bambu Studio 99.00.00.01.", read("CHANGELOG.md"))
+
+    def test_fails_without_a_digest_to_pin(self):
+        p, _ = self.run_with({"tag_name": "v99.00.00.01", "assets": [
+            {"name": "BambuStudio_ubuntu24.04-v99.00.00.01-20990101000000.AppImage"}]})
+        self.assertNotEqual(0, p.returncode)
 
     def test_leaves_a_current_or_older_release(self):
         p, read = self.run_with({"tag_name": "v01.00.00.00", "assets": []})
