@@ -39,12 +39,13 @@ open: it works wherever Pandy reaches Home Assistant. Pandy's Home Assistant use
 ```
 git clone https://github.com/gccammelli/pandy-slicer
 cd pandy-slicer
+echo "PANDY_SLICER_TOKEN=$(openssl rand -hex 24)" > .env
 docker compose up -d
 ```
 
-Then in Pandy (Me › Settings › **Slicer for MakerWorld prints**) enter `<that computer's IP>:8737`. To require a token, set `PANDY_SLICER_TOKEN` in
-`docker-compose.yml` (or the add-on's **token** option) and enter the same one in Pandy. Don't expose port 8737 to the
-internet.
+Then in Pandy (Me › Settings › **Slicer for MakerWorld prints**) enter `<that computer's IP>:8737` and the token from
+`.env`. The token is required: without one the slicer refuses every request that doesn't come through Home Assistant.
+Don't expose port 8737 to the internet.
 
 ## API
 
@@ -53,10 +54,11 @@ internet.
 | `GET /health` | `{"ok": true, "version": "<Bambu Studio version>"}` |
 | `POST /slice?plate=1&name=<name>` | body: the 3MF; answers the sliced `.gcode.3mf`, with a JSON summary in `X-Pandy-Result` |
 | `&printer=<preset>` | re-target to that Bambu printer preset first, e.g. `Bambu Lab X1 Carbon 0.4 nozzle` |
-| `&upload=1` | also put it on the printer: headers `X-Printer-Ip`, `X-Printer-Serial`, `X-Printer-Code`; answers `{"path": "cache/<name>.gcode.3mf", "plates": […]}` |
+| `&upload=1` | also put it on the printer: headers `X-Printer-Ip`, `X-Printer-Serial`, `X-Printer-Code`; answers `{"path": "cache/<name>.gcode.3mf", "plates": […]}`. Only through Home Assistant's ingress, so the access code never travels in plain HTTP; directly, download the sliced file and send it to the printer yourself |
 
-With a token set, send `Authorization: Bearer <token>` (not needed through Home Assistant's ingress, which checks who
-is asking itself). One slice at a time.
+Send `Authorization: Bearer <token>` (not needed through Home Assistant's ingress, which checks who is asking itself).
+One slice at a time. The slicer always uses Bambu's own printer G-code (start, end, filament change) for the
+project's printer, and refuses sliced files with temperatures beyond any Bambu printer's limits.
 
 ## Development
 
