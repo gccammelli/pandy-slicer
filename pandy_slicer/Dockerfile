@@ -1,7 +1,7 @@
 # Pandy Slicer: Bambu Studio's command-line slicer behind a small HTTP API, for Pandy's "print this MakerWorld model".
 # Runs anywhere Docker does (x86-64: Bambu Studio is published for x86-64 Linux only), and as a Home Assistant add-on.
 # The base is fixed here (not Home Assistant's BUILD_FROM): Bambu Studio's AppImage needs a glibc distribution.
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 ARG BAMBU_VERSION=02.08.02.61
 ARG BAMBU_ASSET=BambuStudio_ubuntu24.04-v02.08.02.61-20260820225108.AppImage
