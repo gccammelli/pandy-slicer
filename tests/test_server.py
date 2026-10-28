@@ -161,16 +161,46 @@ class TokenTest(unittest.TestCase):
 
 
 
-class NotAProjectTest(unittest.TestCase):
-    def test_a_plain_3mf_is_refused_with_a_reason(self):
+class PlainModelTest(unittest.TestCase):
+    """A plain 3MF (an STL wrapped by Pandy, or a Thingiverse/Printables 3MF) has no settings of its own."""
+    MODEL = {"3D/3dmodel.model": "<model/>"}
+
+    def test_a_plain_3mf_needs_a_printer_to_slice_for(self):
         h = server.Handler.__new__(server.Handler)
-        body = zip_of({"3D/3dmodel.model": "<model/>"})
-        h.path, h.client_address, h.sent = "/slice?plate=1&printer=Bambu+Lab+X1+Carbon+0.4+nozzle", (server.INGRESS_PROXY, 1), []
+        body = zip_of(self.MODEL)
+        h.path, h.client_address, h.sent = "/slice?plate=1", (server.INGRESS_PROXY, 1), []
         h.headers, h.rfile = {"Content-Length": str(len(body))}, io.BytesIO(body)
         h._json = lambda code, obj: h.sent.append((code, obj))
         h.do_POST()
         self.assertEqual(422, h.sent[0][0])
-        self.assertIn("Bambu Studio project", h.sent[0][1]["error"])
+        self.assertIn("Choose a printer", h.sent[0][1]["error"])
+
+    def test_it_gets_empty_project_settings_and_is_arranged_on_the_bed(self):
+        self.assertTrue(server.bare_model(zip_of(self.MODEL)))
+        project = server.as_project(zip_of(self.MODEL))
+        self.assertFalse(server.bare_model(project))
+        cfg = json.loads(zipfile.ZipFile(io.BytesIO(project)).read("Metadata/project_settings.config"))
+        self.assertEqual({"printer_settings_id": "", "print_settings_id": "", "filament_settings_id": []}, cfg)
+        self.assertFalse(server.bare_model(zip_of({"Metadata/project_settings.config": "{}"})))
+        seen = []
+        real = (server.subprocess.run, server.conversion, server.check_safe)
+        server.conversion = lambda data, target: (["--load-settings", "x"], "")
+        server.check_safe = lambda sliced: None
+        def fake(cmd, **kw):
+            seen.append(cmd)
+            out = os.path.join(cmd[cmd.index("--outputdir") + 1], "sliced.gcode.3mf")
+            with open(out, "wb") as f:
+                f.write(zip_of({"Metadata/plate_1.gcode": gcode(START)}))
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        server.subprocess.run = fake
+        try:
+            server.slice_3mf(zip_of(self.MODEL), 1, "Bambu Lab X1 Carbon 0.4 nozzle")
+            server.slice_3mf(zip_of({"Metadata/project_settings.config": "{}"}), 1, "Bambu Lab X1 Carbon 0.4 nozzle")
+        finally:
+            server.subprocess.run, server.conversion, server.check_safe = real
+        self.assertIn("--arrange", seen[0])
+        self.assertNotIn("--arrange", seen[1])
+
 
 class UploadTest(unittest.TestCase):
     def test_printer_upload_is_refused_outside_home_assistant(self):
