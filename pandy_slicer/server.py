@@ -246,9 +246,31 @@ def check_safe(sliced: bytes):
                                        "so it isn't safe to print.")
 
 
+def bare_model(data: bytes) -> bool:
+    """Whether [data] is a plain 3MF with just geometry (an STL wrapped by Pandy, or a Thingiverse/Printables 3MF)."""
+    return "Metadata/project_settings.config" not in zipfile.ZipFile(io.BytesIO(data)).namelist()
+
+
+def as_project(data: bytes) -> bytes:
+    """Gives a bare model empty project settings, so the printer preset chosen with &printer= supplies every setting
+    (process, filament, G-codes); without a printer preset the result fails [check_safe]."""
+    z = zipfile.ZipFile(io.BytesIO(data))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as out:
+        for info in z.infolist():
+            out.writestr(info, z.read(info.filename))
+        out.writestr("Metadata/project_settings.config", json.dumps({"printer_settings_id": "", "print_settings_id": "", "filament_settings_id": []}))
+    return buf.getvalue()
+
+
 def slice_3mf(data: bytes, plate: int, target: str = "", bed_type: str = "auto"):
     """Slices one plate (0 = all) and returns (sliced 3mf bytes, summary dict). Raises RuntimeError with Bambu's message."""
     check_zip(data)
+    bare = bare_model(data)
+    if bare:
+        if not target:
+            raise RuntimeError("Choose a printer to slice a plain model for")
+        data = as_project(data)
     work = tempfile.mkdtemp(prefix="pandy-")
     try:
         src = os.path.join(work, "model.3mf")
@@ -260,7 +282,7 @@ def slice_3mf(data: bytes, plate: int, target: str = "", bed_type: str = "auto")
         out = os.path.join(out_dir, "sliced.gcode.3mf")
         # --export-3mf takes a bare name: Bambu Studio puts it in --outputdir.
         extra, converted_from = conversion(source, target)
-        cmd = [BAMBU, *extra, "--slice", str(plate), "--export-3mf", "sliced.gcode.3mf", "--outputdir", out_dir, "--uptodate", src]
+        cmd = [BAMBU, *extra, *(["--arrange", "1"] if bare else []), "--slice", str(plate), "--export-3mf", "sliced.gcode.3mf", "--outputdir", out_dir, "--uptodate", src]
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=SLICE_TIMEOUT, cwd=work)
         result = {}
         rj = os.path.join(out_dir, "result.json")
