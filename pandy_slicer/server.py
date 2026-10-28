@@ -138,6 +138,9 @@ def conversion(data: bytes, target: str):
         json.dump(process, f)
     args = ["--load-settings", f"{machine_file};{process_file}"]
     filaments = [f.split(" @", 1)[0] + f" @{suffix}" for f in cfg.get("filament_settings_id", [])]
+    if not filaments:
+        # A plain model (no project) has no filament, and Bambu Studio crashes without one: print it in Bambu PLA Basic.
+        filaments = [f"Bambu PLA Basic @{suffix}"]
     files = [os.path.join(BBL, "filament", f"{f}.json") for f in filaments]
     if files and all(os.path.exists(f) for f in files):
         args += ["--load-filaments", ";".join(files)]
