@@ -117,6 +117,12 @@ class PresetsTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             server.conversion(self.project(printer_settings_id="Bambu Lab A1 0.4 nozzle"), "../secret")
 
+    def test_it_prints_in_the_printers_basic_pla(self):
+        args, source = server.conversion(server.as_project(zip_of({"3D/3dmodel.model": "<model/>"})), "Bambu Lab X1 Carbon 0.4 nozzle")
+        self.assertEqual("", source)
+        self.assertIn("--load-filaments", args)
+        self.assertIn("Bambu PLA Basic @", args[args.index("--load-filaments") + 1])
+
     def test_same_printer_needs_no_conversion(self):
         self.assertEqual(([], None), server.conversion(self.project(printer_settings_id="Bambu Lab X1 Carbon 0.4 nozzle"),
                                                        "Bambu Lab X1 Carbon 0.4 nozzle"))
