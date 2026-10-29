@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.0
+
+- Slices plain 3MF models (an STL wrapped by Pandy, from Thingiverse or Printables): the printer preset chosen with `printer=` supplies the
+  settings and filament (Bambu PLA Basic), and the model is arranged on the plate. A printer must be chosen.
+
 ## 1.2.0
 
 - A token is now required for direct access (port 8737); without one, only Home Assistant's ingress is let in.
