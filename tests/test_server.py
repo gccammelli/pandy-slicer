@@ -71,7 +71,10 @@ class PresetsTest(unittest.TestCase):
               "include": ["X1C start"], "default_print_profile": "0.20mm Standard @BBL X1C"})
         write("machine/X1C start.json", {"name": "X1C start", "machine_start_gcode": START * 10})
         write("process/0.20mm Standard @BBL X1C.json", {"name": "0.20mm Standard @BBL X1C"})
-        write("filament/Bambu PLA Basic @BBL X1C.json", {"name": "Bambu PLA Basic @BBL X1C"})
+        write("filament/Bambu PLA Basic @BBL X1C.json", {"name": "Bambu PLA Basic @BBL X1C", "inherits": "Bambu PLA Basic @base", "filament_flow_ratio": ["0.98"]})
+        write("filament/Bambu PLA Basic @base.json", {"name": "Bambu PLA Basic @base", "filament_density": ["1.26"], "filament_flow_ratio": ["1"], "filament_colour": ["#00AE42"]})
+        write("filament/Bambu PETG Basic @BBL X1C.json", {"name": "Bambu PETG Basic @BBL X1C", "filament_type": ["PETG"], "filament_density": ["1.27"]})
+        write("filament/Generic TPU @BBL X1C.json", {"name": "Generic TPU @BBL X1C", "filament_type": ["TPU"]})
         self.saved = (server.BBL, server.PROFILES)
         server.BBL, server.PROFILES = bbl, os.path.join(bbl, "machine")
 
@@ -117,11 +120,32 @@ class PresetsTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             server.conversion(self.project(printer_settings_id="Bambu Lab A1 0.4 nozzle"), "../secret")
 
-    def test_it_prints_in_the_printers_basic_pla(self):
-        args, source = server.conversion(server.as_project(zip_of({"3D/3dmodel.model": "<model/>"})), "Bambu Lab X1 Carbon 0.4 nozzle")
-        self.assertEqual("", source)
-        self.assertIn("--load-filaments", args)
-        self.assertIn("Bambu PLA Basic @", args[args.index("--load-filaments") + 1])
+    def test_a_plain_model_gets_the_chosen_filament_in_the_chosen_colour(self):
+        def loaded(kind, color=""):
+            args, _ = server.conversion(server.as_project(zip_of({"3D/3dmodel.model": "<model/>"})), "Bambu Lab X1 Carbon 0.4 nozzle", kind, color)
+            with open(args[args.index("--load-filaments") + 1]) as f:
+                return json.load(f)
+        pla = loaded("")  # nothing chosen: Bambu PLA Basic, its inherited values merged in
+        self.assertEqual(["1.26"], pla["filament_density"])
+        self.assertEqual(["0.98"], pla["filament_flow_ratio"])  # the printer's own override wins
+        self.assertNotIn("inherits", pla)
+        self.assertEqual(["#00AE42"], pla["filament_colour"])
+        petg = loaded("PETG", "#ff0000")
+        self.assertEqual(["PETG"], petg["filament_type"])
+        self.assertEqual(["#FF0000"], petg["filament_colour"])
+        self.assertEqual(["TPU"], loaded("TPU")["filament_type"])  # no Bambu one: the generic preset
+        self.assertEqual(["1.26"], loaded("PA-CF; rm -rf /", "red")["filament_density"])  # unknown type, odd text: Bambu PLA Basic
+
+    def test_the_chosen_build_plate_reaches_the_slicers_settings(self):
+        for bed, expected in (("textured_plate", "Textured PEI Plate"), ("auto", None)):
+            args, _ = server.conversion(server.as_project(zip_of({"3D/3dmodel.model": "<model/>"}), bed), "Bambu Lab X1 Carbon 0.4 nozzle")
+            with open(args[1].split(";")[1]) as f:
+                self.assertEqual(expected, json.load(f).get("curr_bed_type"))
+
+    def test_the_chosen_build_plate_is_written_into_a_plain_model(self):
+        cfg = lambda bed: json.loads(zipfile.ZipFile(io.BytesIO(server.as_project(zip_of({"3D/3dmodel.model": "<model/>"}), bed))).read("Metadata/project_settings.config"))
+        self.assertEqual("Textured PEI Plate", cfg("textured_plate")["curr_bed_type"])
+        self.assertNotIn("curr_bed_type", cfg("auto"))
 
     def test_same_printer_needs_no_conversion(self):
         self.assertEqual(([], None), server.conversion(self.project(printer_settings_id="Bambu Lab X1 Carbon 0.4 nozzle"),
@@ -190,7 +214,7 @@ class PlainModelTest(unittest.TestCase):
         self.assertFalse(server.bare_model(zip_of({"Metadata/project_settings.config": "{}"})))
         seen = []
         real = (server.subprocess.run, server.conversion, server.check_safe)
-        server.conversion = lambda data, target: (["--load-settings", "x"], "")
+        server.conversion = lambda data, target, *rest: (["--load-settings", "x"], "")
         server.check_safe = lambda sliced: None
         def fake(cmd, **kw):
             seen.append(cmd)

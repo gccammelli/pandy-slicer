@@ -1,9 +1,17 @@
 # Changelog
 
+## 1.4.0
+
+- Printing an STL model (from Thingiverse or Printables) now uses the filament you pick in Pandy: its type (PLA, PETG, ABS, ...) and
+  colour. The slicer takes Bambu's own settings for that type on your printer, so the temperatures are right, and the sliced
+  file records the colour.
+- It also uses the build plate you choose (before, an STL always sliced for the Cool Plate).
+- The filament's settings are now read in full, so the filament weight is reported correctly (it showed 0 g).
+
 ## 1.3.0
 
-- Slices plain 3MF models (an STL wrapped by Pandy, from Thingiverse or Printables): the printer preset chosen with `printer=` supplies the
-  settings and filament (Bambu PLA Basic), and the model is arranged on the plate. A printer must be chosen.
+- The slicer can now slice an STL model, not only MakerWorld projects. Pandy sends the STL wrapped in a plain 3MF; the slicer uses
+  Bambu's standard settings for your printer, in Bambu PLA Basic, and places the model on the plate.
 
 ## 1.2.0
 

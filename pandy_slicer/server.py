@@ -3,6 +3,8 @@
 GET  /health                   -> {"ok": true, "version": "..."}
 POST /slice?plate=1            body: the .3mf -> the sliced .gcode.3mf (headers X-Pandy-Result: JSON summary)
      &bed_type=<Bambu bed code> optionally overrides the selected plate's bed metadata before slicing
+     &filament_type=PETG       plain models only (an STL): the filament's type, as Bambu's or a generic preset for the printer
+     &filament_color=%23RRGGBB plain models only: its colour (the printer's default for the type when absent)
      &printer=<preset>         re-targets the project to that Bambu printer preset first ("Bambu Lab X1 Carbon 0.4 nozzle"),
                                keeping the designer's changed settings, as Bambu Studio's printer switch does
 POST /slice?plate=1&upload=1   same, then puts the file on the printer over FTPS and answers JSON
@@ -103,7 +105,42 @@ def system_gcodes(machine: str) -> dict:
     return out
 
 
-def conversion(data: bytes, target: str):
+def flatten_preset(folder: str, name: str, depth: int = 0) -> dict:
+    """A preset with its whole `inherits` chain merged in (Bambu Studio's command line leaves values such as the
+    filament's density unresolved when a user preset points at a system one)."""
+    path = preset_path(folder, name)
+    if not path or depth > 6:
+        return {}
+    with open(path) as f:
+        d = json.load(f)
+    merged = flatten_preset(folder, d.get("inherits", ""), depth + 1)
+    merged.update({k: v for k, v in d.items() if k != "inherits"})
+    return merged
+
+
+def bare_filament(filament_type: str, color: str, suffix: str) -> str:
+    """The preset file for a plain model's filament: [filament_type] ("PETG") as Bambu Basic, Bambu or Generic filament
+    for the printer (" @BBL X1C"), else Bambu PLA Basic; [color] ("#RRGGBB") replaces its colour. Written next to the
+    others, as Bambu Studio finds presets by name."""
+    folder = os.path.join(BBL, "filament")
+    kind = re.sub(r"[^A-Za-z0-9+\- ]", "", filament_type or "").strip()
+    chosen = f"Bambu PLA Basic @{suffix}"
+    for candidate in ([f"Bambu {kind} Basic @{suffix}", f"Bambu {kind} @{suffix}", f"Generic {kind} @{suffix}"] if kind else []):
+        if preset_path(folder, candidate):
+            chosen = candidate
+            break
+    d = flatten_preset(folder, chosen)
+    d.update({"name": "pandy filament", "from": "User", "setting_id": ""})
+    if re.fullmatch(r"#[0-9A-Fa-f]{6}", color or ""):
+        d["filament_colour"] = [color.upper()]
+    path = os.path.join(folder, "pandy filament.json")
+    with open(path, "w") as f:
+        json.dump(d, f)
+    print(f"Plain model: filament {chosen} in {d.get('filament_colour')}")
+    return path
+
+
+def conversion(data: bytes, target: str, filament_type: str = "", filament_color: str = ""):
     """Bambu Studio command-line arguments that re-target a project to the printer preset [target] ("Bambu Lab X1
     Carbon 0.4 nozzle"), the way Studio's printer switch does: the target's printer preset (its G-code templates
     merged in), the target's version of the project's process preset with the designer's changed settings applied on
@@ -133,15 +170,19 @@ def conversion(data: bytes, target: str):
     process = {"type": "process", "from": "User", "name": "pandy process", "inherits": process_name, "print_settings_id": "pandy process",
                "compatible_printers": [target],
                **{k: cfg[k] for k in changed}}
+    if not source and cfg.get("curr_bed_type"):
+        process["curr_bed_type"] = cfg["curr_bed_type"]  # a plain model: the build plate the user chose (the preset's would win)
     process_file = os.path.join(BBL, "process", "pandy process.json")
     with open(process_file, "w") as f:
         json.dump(process, f)
     args = ["--load-settings", f"{machine_file};{process_file}"]
     filaments = [f.split(" @", 1)[0] + f" @{suffix}" for f in cfg.get("filament_settings_id", [])]
     if not filaments:
-        # A plain model (no project) has no filament, and Bambu Studio crashes without one: print it in Bambu PLA Basic.
-        filaments = [f"Bambu PLA Basic @{suffix}"]
-    files = [os.path.join(BBL, "filament", f"{f}.json") for f in filaments]
+        # A plain model (no project) has no filament, and Bambu Studio crashes without one: it gets the chosen filament
+        # type (Bambu's own preset for it, else a generic one, else Bambu PLA Basic) in the chosen colour.
+        files = [bare_filament(filament_type, filament_color, suffix)]
+    else:
+        files = [os.path.join(BBL, "filament", f"{f}.json") for f in filaments]
     if files and all(os.path.exists(f) for f in files):
         args += ["--load-filaments", ";".join(files)]
     print(f"Converting from {source} to {target}: process {process_name} + {changed}, filaments {'converted' if '--load-filaments' in args else 'kept'}")
@@ -254,26 +295,30 @@ def bare_model(data: bytes) -> bool:
     return "Metadata/project_settings.config" not in zipfile.ZipFile(io.BytesIO(data)).namelist()
 
 
-def as_project(data: bytes) -> bytes:
+def as_project(data: bytes, bed_type: str = "auto") -> bytes:
     """Gives a bare model empty project settings, so the printer preset chosen with &printer= supplies every setting
-    (process, filament, G-codes); without a printer preset the result fails [check_safe]."""
+    (process, filament, G-codes), and the build plate chosen with &bed_type= (else the printer's default); without a
+    printer preset the result fails [check_safe]."""
+    cfg = {"printer_settings_id": "", "print_settings_id": "", "filament_settings_id": []}
+    if (bed_type or "").lower() in BED_TYPE_LABELS:
+        cfg["curr_bed_type"] = BED_TYPE_LABELS[bed_type.lower()]
     z = zipfile.ZipFile(io.BytesIO(data))
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as out:
         for info in z.infolist():
             out.writestr(info, z.read(info.filename))
-        out.writestr("Metadata/project_settings.config", json.dumps({"printer_settings_id": "", "print_settings_id": "", "filament_settings_id": []}))
+        out.writestr("Metadata/project_settings.config", json.dumps(cfg))
     return buf.getvalue()
 
 
-def slice_3mf(data: bytes, plate: int, target: str = "", bed_type: str = "auto"):
+def slice_3mf(data: bytes, plate: int, target: str = "", bed_type: str = "auto", filament_type: str = "", filament_color: str = ""):
     """Slices one plate (0 = all) and returns (sliced 3mf bytes, summary dict). Raises RuntimeError with Bambu's message."""
     check_zip(data)
     bare = bare_model(data)
     if bare:
         if not target:
             raise RuntimeError("Choose a printer to slice a plain model for")
-        data = as_project(data)
+        data = as_project(data, bed_type)
     work = tempfile.mkdtemp(prefix="pandy-")
     try:
         src = os.path.join(work, "model.3mf")
@@ -284,7 +329,7 @@ def slice_3mf(data: bytes, plate: int, target: str = "", bed_type: str = "auto")
             f.write(heal(source))
         out = os.path.join(out_dir, "sliced.gcode.3mf")
         # --export-3mf takes a bare name: Bambu Studio puts it in --outputdir.
-        extra, converted_from = conversion(source, target)
+        extra, converted_from = conversion(source, target, filament_type, filament_color)
         cmd = [BAMBU, *extra, *(["--arrange", "1"] if bare else []), "--slice", str(plate), "--export-3mf", "sliced.gcode.3mf", "--outputdir", out_dir, "--uptodate", src]
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=SLICE_TIMEOUT, cwd=work)
         result = {}
@@ -456,7 +501,7 @@ class Handler(BaseHTTPRequestHandler):
             data = self.rfile.read(length)
             if not data.startswith(b"PK"):
                 return self._json(400, {"error": "That isn't a 3MF file"})
-            sliced, info = slice_3mf(data, plate, q.get("printer", ""), q.get("bed_type", "auto"))
+            sliced, info = slice_3mf(data, plate, q.get("printer", ""), q.get("bed_type", "auto"), q.get("filament_type", ""), q.get("filament_color", ""))
         except subprocess.TimeoutExpired:
             return self._json(504, {"error": "Slicing took too long"})
         except RuntimeError as e:

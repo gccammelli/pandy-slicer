@@ -148,7 +148,7 @@ class RequestTest(unittest.TestCase):
         with patch.object(server, "slice_3mf", return_value=(b"sliced", {"plates": []})) as slicer:
             h = self.handler("/slice?plate=2&printer=X1C&bed_type=hot_plate&name=Cube.3mf")
             h.do_POST()
-            slicer.assert_called_once_with(b"PKtest", 2, "X1C", "hot_plate")
+            slicer.assert_called_once_with(b"PKtest", 2, "X1C", "hot_plate", "", "")
             self.assertEqual((200, b"sliced", "application/octet-stream"), h.sent[0][:3])
             self.assertIn("Cube.gcode.3mf", h.sent[0][3]["Content-Disposition"])
             self.assertEqual({"plates": []}, json.loads(h.sent[0][3]["X-Pandy-Result"]))
