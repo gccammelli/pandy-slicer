@@ -1,5 +1,5 @@
 name: Pandy Slicer
-version: "1.4.0"
+version: "1.4.1"
 slug: pandy_slicer
 description: Slices MakerWorld models with Bambu Studio so the Pandy app can print them.
 url: https://github.com/gccammelli/pandy-slicer

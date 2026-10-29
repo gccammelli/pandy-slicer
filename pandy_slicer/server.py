@@ -27,6 +27,8 @@ import shutil
 import ssl
 import subprocess
 import tempfile
+import time
+import traceback
 import threading
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -478,6 +480,17 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "Not found"})
 
     def do_POST(self):
+        # Anything unexpected is answered (and logged) instead of dropping the connection, which Home Assistant's ingress shows as 502.
+        try:
+            self._post()
+        except Exception as e:  # noqa: BLE001 - reported to the caller
+            traceback.print_exc()
+            try:
+                self._json(500, {"error": f"The slicer failed: {type(e).__name__}: {e}"[:300]})
+            except OSError:
+                pass
+
+    def _post(self):
         url = urlparse(self.path)
         if url.path != "/slice":
             return self._json(404, {"error": "Not found"})
@@ -501,7 +514,9 @@ class Handler(BaseHTTPRequestHandler):
             data = self.rfile.read(length)
             if not data.startswith(b"PK"):
                 return self._json(400, {"error": "That isn't a 3MF file"})
+            started = time.monotonic()
             sliced, info = slice_3mf(data, plate, q.get("printer", ""), q.get("bed_type", "auto"), q.get("filament_type", ""), q.get("filament_color", ""))
+            print(f"Sliced {len(data) // 1024} KiB in {time.monotonic() - started:.0f} s")
         except subprocess.TimeoutExpired:
             return self._json(504, {"error": "Slicing took too long"})
         except RuntimeError as e:

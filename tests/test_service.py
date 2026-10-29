@@ -82,6 +82,14 @@ class HttpTest(unittest.TestCase):
                 self.assertEqual(status, self.request("POST", "/slice", b"PKproject")[0])
                 self.assertFalse(server.LOCK.locked())
 
+    def test_an_unexpected_failure_is_answered_not_dropped(self):
+        # A dropped connection shows up as 502 behind Home Assistant's ingress; the caller should get the reason instead.
+        with patch.object(server, "slice_3mf", side_effect=ValueError("odd preset")), patch("traceback.print_exc"):
+            status, _, body = self.request("POST", "/slice", b"PKproject")
+        self.assertEqual(500, status)
+        self.assertIn("ValueError: odd preset", json.loads(body)["error"])
+        self.assertFalse(server.LOCK.locked())
+
     def test_busy_rejects_before_slicing(self):
         with patch.object(server, "LOCK") as lock:
             lock.acquire.return_value = False

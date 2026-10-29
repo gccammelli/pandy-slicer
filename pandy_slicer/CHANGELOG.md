@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.1
+
+- If something unexpected goes wrong while slicing, the slicer now answers with the reason (and logs it) instead of dropping the connection,
+  which Home Assistant showed as a bare "502". The log also shows how long each slice took.
+
 ## 1.4.0
 
 - Printing an STL model (from Thingiverse or Printables) now uses the filament you pick in Pandy: its type (PLA, PETG, ABS, ...) and
