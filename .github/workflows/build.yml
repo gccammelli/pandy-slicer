@@ -25,6 +25,7 @@ jobs:
           python3 .github/scripts/public_issue_patch.py --self-test
           python -m pip install coverage==7.16.2
           python -m coverage run --source=pandy_slicer -m unittest discover tests -v
+          python -m coverage report --fail-under=90
           python -m coverage xml
       - name: Upload coverage
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
