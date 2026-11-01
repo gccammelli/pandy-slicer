@@ -1,29 +1,57 @@
 name: Auto-merge first-party maintenance
 
 on:
-  pull_request_target:
-    types: [opened, reopened, ready_for_review, synchronize, labeled, unlabeled]
+  workflow_run:
+    workflows: [Build]
+    types: [completed]
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
+concurrency:
+  group: first-party-auto-merge
+  cancel-in-progress: false
+
 jobs:
-  enable:
-    if: >-
-      github.event.pull_request.base.ref == 'main' &&
-      (github.event.pull_request.user.login == 'dependabot[bot]' ||
-       (github.event.pull_request.user.login == 'gccammelli' &&
-        contains(github.event.pull_request.labels.*.name, 'first-party-maintenance') &&
-        !contains(github.event.pull_request.labels.*.name, 'needs-maintainer-approval') &&
-        !startsWith(github.event.pull_request.head.ref, 'cammelli-bot/issue-'))) &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      !github.event.pull_request.draft
+  reconcile:
     runs-on: ubuntu-latest
     steps:
-      - name: Enable auto-merge after required checks
+      - name: Merge eligible maintenance after required checks
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: gh pr merge "$PR_NUMBER" --auto --squash
+          REPO_NAME: ${{ github.event.repository.name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Never check out or execute PR code in this privileged workflow.
+          gh pr list --state open --limit 500 \
+            --json number,author,baseRefName,headRepository,headRepositoryOwner,headRefName,isDraft,labels,headRefOid \
+            --jq '.[] | select(.baseRefName == "main" and (.isDraft | not) and
+              .headRepositoryOwner.login == "gccammelli" and .headRepository.name == env.REPO_NAME and
+              ([.labels[].name] | index("needs-maintainer-approval") | not) and
+              (.author.login == "dependabot[bot]" or
+                (.author.login == "gccammelli" and
+                 ([.labels[].name] | index("first-party-maintenance")) and
+                 (.headRefName | startswith("cammelli-bot/issue-") | not)))) |
+              [.number, .headRefOid] | @tsv' > "$RUNNER_TEMP/eligible-prs"
+          merged=0
+          while IFS=$'\t' read -r number head_sha; do
+            [[ -n "$number" ]] || continue
+            if ! gh pr checks "$number" --required; then
+              echo "PR #$number is waiting for required checks."
+              continue
+            fi
+            # Reject a changed head instead of merging a revision we did not inspect.
+            gh pr merge "$number" --squash --match-head-commit "$head_sha"
+            merged=1
+          done < "$RUNNER_TEMP/eligible-prs"
+          # A merge made using GITHUB_TOKEN does not itself trigger push workflows.
+          if [[ "$merged" == 1 ]]; then
+            gh workflow run build.yml --ref main
+          fi
