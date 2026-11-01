@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.2
+
+- When the sliced file can't be put on the printer (wrong access code, printer busy or unreachable), the slicer answers HTTP 424 with the
+  reason and logs it. It used 502, which Home Assistant and Cloudflare replace with their own page, so Pandy only showed
+  "Pandy Slicer isn't answering".
+
 ## 1.4.1
 
 - If something unexpected goes wrong while slicing, the slicer now answers with the reason (and logs it) instead of dropping the connection,

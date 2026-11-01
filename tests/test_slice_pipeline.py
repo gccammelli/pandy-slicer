@@ -168,7 +168,7 @@ class RequestTest(unittest.TestCase):
             with patch.object(server, "upload", side_effect=OSError("offline")):
                 h = self.handler("/slice?upload=1", headers=headers)
                 h.do_POST()
-                self.assertEqual(502, h.sent[0][0])
+                self.assertEqual(424, h.sent[0][0])
                 self.assertIn("offline", h.sent[0][1]["error"])
 
     def test_upload_checks_certificate_before_sending_credentials(self):

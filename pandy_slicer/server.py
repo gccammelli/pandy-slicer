@@ -533,7 +533,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 path = upload(ip, serial, code, name, sliced)
             except Exception as e:  # noqa: BLE001 - reported to the app
-                return self._json(502, {"error": f"Couldn't put the file on the printer: {e}"})
+                # Not 502: Home Assistant's and Cloudflare's proxies replace a 502's body with their own page, which hid this reason.
+                print(f"Couldn't put the file on the printer at {ip}: {type(e).__name__}: {e}")
+                return self._json(424, {"error": f"Couldn't put the file on the printer: {e}"})
             return self._json(200, {"path": path, "name": name, "size": len(sliced), **info})
         self._send(200, sliced, "application/octet-stream",
                    {"X-Pandy-Result": json.dumps(info), "Content-Disposition": f'attachment; filename="{name}"'})

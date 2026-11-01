@@ -107,7 +107,7 @@ class HttpTest(unittest.TestCase):
             upload.assert_called_once_with("192.0.2.1", "SN", "code", "Cube.gcode.3mf", b"sliced")
             upload.side_effect = OSError("disconnected")
             status, _, body = self.request("POST", "/slice?upload=1", b"PKproject", headers)
-            self.assertEqual(502, status)
+            self.assertEqual(424, status)
             self.assertIn("disconnected", json.loads(body)["error"])
 
 
