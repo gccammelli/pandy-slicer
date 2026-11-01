@@ -1,8 +1,8 @@
-name: Auto-merge Dependabot maintenance
+name: Auto-merge first-party maintenance
 
 on:
   pull_request_target:
-    types: [opened, reopened, ready_for_review, synchronize]
+    types: [opened, reopened, ready_for_review, synchronize, labeled, unlabeled]
 
 permissions:
   contents: write
@@ -12,7 +12,11 @@ jobs:
   enable:
     if: >-
       github.event.pull_request.base.ref == 'main' &&
-      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      (github.event.pull_request.user.login == 'dependabot[bot]' ||
+       (github.event.pull_request.user.login == 'gccammelli' &&
+        contains(github.event.pull_request.labels.*.name, 'first-party-maintenance') &&
+        !contains(github.event.pull_request.labels.*.name, 'needs-maintainer-approval') &&
+        !startsWith(github.event.pull_request.head.ref, 'cammelli-bot/issue-'))) &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       !github.event.pull_request.draft
     runs-on: ubuntu-latest
