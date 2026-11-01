@@ -23,3 +23,5 @@
 
 - For a maintainer-requested or first-party maintenance pull request, add the `first-party-maintenance` label only after applicable non-CI review, emulator, integration and hardware gates have passed. The auto-merge workflow then waits for required CI. Dependabot maintenance is eligible without the label.
 - Never add this label to work requested by a third party, even if a Cammelli agent authored the pull request. Public-issue branches and PRs labeled `needs-maintainer-approval` are excluded. Do not use the label to bypass required gates.
+
+The reconciliation workflow checks eligible pull requests after Build completes and every 30 minutes; it only merges when required checks pass.
