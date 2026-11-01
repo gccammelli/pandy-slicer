@@ -35,7 +35,7 @@ jobs:
             --jq '.[] | select(.baseRefName == "main" and (.isDraft | not) and
               .headRepositoryOwner.login == "gccammelli" and .headRepository.name == env.REPO_NAME and
               ([.labels[].name] | index("needs-maintainer-approval") | not) and
-              (.author.login == "dependabot[bot]" or
+              ((.author.login == "app/dependabot" and .author.is_bot) or
                 (.author.login == "gccammelli" and
                  ([.labels[].name] | index("first-party-maintenance")) and
                  (.headRefName | startswith("cammelli-bot/issue-") | not)))) |
