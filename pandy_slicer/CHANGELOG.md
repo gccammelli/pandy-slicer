@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.1
+
+- The "line" infill pattern is now labelled "Rectilinear", the name Bambu Studio uses.
+
 ## 1.5.0
 
 - Pandy can change quality, strength, support, adhesion and speed for a single print. Unchanged options keep the

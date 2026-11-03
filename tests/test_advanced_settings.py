@@ -23,6 +23,10 @@ class AdvancedSettingsTest(unittest.TestCase):
             with self.subTest(value=invalid), self.assertRaises(ValueError):
                 server.parse_settings(invalid)
 
+    def test_infill_patterns_use_bambu_studio_names(self):
+        pattern = server.SETTINGS_BY_KEY["sparse_infill_pattern"]
+        self.assertEqual("Rectilinear", {o["value"]: o["label"] for o in pattern["options"]}["line"])
+
     def test_rejects_conflicting_object_settings_and_incompatible_nozzles(self):
         with tempfile.TemporaryDirectory() as folder:
             with open(os.path.join(folder, "Printer.json"), "w") as out:

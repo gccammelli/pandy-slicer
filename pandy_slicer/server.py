@@ -81,7 +81,7 @@ SETTINGS = [
     number("Strength", "bottom_shell_layers", "Bottom shell layers", "", 0, 20, True),
     number("Strength", "sparse_infill_density", "Infill density", "%", 0, 100),
     choice("Strength", "sparse_infill_pattern", "Infill pattern", ("grid", "Grid"), ("gyroid", "Gyroid"), ("cubic", "Cubic"),
-           ("line", "Line"), ("triangles", "Triangles"), ("tri-hexagon", "Tri-hexagon"), ("honeycomb", "Honeycomb"), ("adaptivecubic", "Adaptive cubic")),
+           ("line", "Rectilinear"), ("triangles", "Triangles"), ("tri-hexagon", "Tri-hexagon"), ("honeycomb", "Honeycomb"), ("adaptivecubic", "Adaptive cubic")),
     choice("Support", "enable_support", "Generate support", ("1", "On"), ("0", "Off")),
     choice("Support", "support_type", "Support type", ("normal(auto)", "Normal (automatic)"), ("tree(auto)", "Tree (automatic)"),
            ("normal(manual)", "Normal (painted)"), ("tree(manual)", "Tree (painted)")),
