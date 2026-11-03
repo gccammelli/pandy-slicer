@@ -21,6 +21,7 @@ It runs Bambu Studio's own command line, unmodified, and adds what printing from
 - **Safe prints**: missing printer G-code is filled in from Bambu's preset, and a file without the printer's start
   sequence (homing, bed leveling, purge line) is refused.
 - **Plate pictures** kept from the project, for Pandy's history and Skip Parts.
+- **Advanced slicer settings** in Pandy, with per-print quality, strength, support, adhesion and speed overrides.
 - **Upload** to the printer over FTPS, checking its certificate against Bambu's CAs.
 
 x86-64 only (Bambu Studio is published for x86-64 Linux). About 2 GB of disk.
@@ -52,13 +53,17 @@ Don't expose port 8737 to the internet.
 | | |
 |---|---|
 | `GET /health` | `{"ok": true, "version": "<Bambu Studio version>"}` |
+| `GET /settings` | Versioned list of supported advanced process settings and their allowed values |
 | `POST /slice?plate=1&name=<name>` | body: the 3MF; answers the sliced `.gcode.3mf`, with a JSON summary in `X-Pandy-Result` |
+| `X-Pandy-Slicer-Settings` | Optional JSON object of selected settings, for example `{"wall_loops":"3","sparse_infill_density":"20"}`. The response confirms them in `applied_settings` after checking the sliced project. |
 | `&printer=<preset>` | re-target to that Bambu printer preset first, e.g. `Bambu Lab X1 Carbon 0.4 nozzle` |
 | `&upload=1` | also put it on the printer: headers `X-Printer-Ip`, `X-Printer-Serial`, `X-Printer-Code`; answers `{"path": "cache/<name>.gcode.3mf", "plates": […]}`. Only through Home Assistant's ingress, so the access code never travels in plain HTTP; directly, download the sliced file and send it to the printer yourself |
 
 Send `Authorization: Bearer <token>` (not needed through Home Assistant's ingress, which checks who is asking itself).
 One slice at a time. The slicer always uses Bambu's own printer G-code (start, end, filament change) for the
 project's printer, and refuses sliced files with temperatures beyond any Bambu printer's limits.
+Overrides that conflict with object- or layer-specific settings anywhere in the model are refused rather than
+silently ignored. Uncheckable third-party object settings are also refused; filament flow can limit requested speeds.
 
 ## Development
 

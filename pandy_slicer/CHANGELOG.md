@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.0
+
+- Pandy can change quality, strength, support, adhesion and speed for a single print. Unchanged options keep the
+  project's profile, and the slicer verifies the chosen options in the sliced file.
+
 ## 1.4.3
 
 - Slicing a project for a dual-nozzle printer such as the H2D works again. The printer's preset keeps its extruder type and default
