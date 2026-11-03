@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.3
+
+- Slicing a project for a dual-nozzle printer such as the H2D works again. The printer's preset keeps its extruder type and default
+  process in a parent preset that the slicer didn't read, so Bambu Studio failed with "unsupported ExtruderType". The whole preset
+  chain is now used.
+
 ## 1.4.2
 
 - When the sliced file can't be put on the printer (wrong access code, printer busy or unreachable), the slicer answers HTTP 424 with the

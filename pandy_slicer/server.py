@@ -155,8 +155,8 @@ def conversion(data: bytes, target: str, filament_type: str = "", filament_color
     path = preset_path(PROFILES, target)
     if not path:
         raise RuntimeError(f"Bambu Studio has no printer preset called {target}")
-    with open(path) as f:
-        machine = json.load(f)
+    # Dual-nozzle printers (H2D) keep extruder_type, default_print_profile and more in a parent preset.
+    machine = flatten_preset(PROFILES, target)
     for inc in machine.pop("include", []):
         with open(preset_path(PROFILES, inc) or os.devnull) as f:
             machine.update({k: v for k, v in json.load(f).items() if k not in ("name", "instantiation")})

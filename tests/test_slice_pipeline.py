@@ -80,6 +80,34 @@ class SlicePipelineTest(unittest.TestCase):
                 server.slice_3mf(source, 1)
         self.assertFalse(os.path.exists(workspaces[0]))
 
+    def test_conversion_merges_a_machine_presets_inherited_parent(self):
+        """Dual-nozzle printers (H2D) keep extruder_type and default_print_profile in a parent preset."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as bbl:
+            for folder in ("machine", "process", "filament"):
+                os.makedirs(os.path.join(bbl, folder))
+            def write(folder, name, body):
+                with open(os.path.join(bbl, folder, f"{name}.json"), "w") as f:
+                    json.dump(body, f)
+            write("machine", "Dual 0.4", {"name": "Dual 0.4", "inherits": "dual_common", "include": ["Dual start"]})
+            write("machine", "dual_common", {"default_print_profile": "0.20mm Standard @DUAL", "extruder_type": ["Direct Drive", "Direct Drive"]})
+            write("machine", "Dual start", {"machine_start_gcode": "G28"})
+            write("process", "0.20mm Standard @DUAL", {})
+            project = zip_of({"Metadata/project_settings.config": json.dumps(
+                {"printer_settings_id": "Other", "print_settings_id": "0.20mm Standard @Other", "filament_settings_id": []})})
+            with patch.object(server, "BBL", bbl), patch.object(server, "PROFILES", os.path.join(bbl, "machine")), \
+                    patch.object(server, "bare_filament", return_value="missing.json"):
+                args, source = server.conversion(project, "Dual 0.4")
+            with open(os.path.join(bbl, "machine", "pandy Dual 0.4.json")) as f:
+                machine = json.load(f)
+            with open(os.path.join(bbl, "process", "pandy process.json")) as f:
+                process = json.load(f)
+        self.assertEqual(["Direct Drive", "Direct Drive"], machine["extruder_type"])
+        self.assertEqual("G28", machine["machine_start_gcode"])
+        self.assertNotIn("inherits", machine)
+        self.assertEqual("0.20mm Standard @DUAL", process["inherits"])
+        self.assertEqual("Other", source)
+
     def test_summary_and_picture_fallbacks(self):
         self.assertEqual({"plates": [], "bambu": {"return_code": 1}}, server.summary(b"broken", {"return_code": 1, "secret": "omit"}))
         sliced = zip_of({"Metadata/plate_1.png": b"existing"})
