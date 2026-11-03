@@ -1,12 +1,14 @@
 """Pandy Slicer: slices 3MF projects (MakerWorld print profiles) with Bambu Studio's command line, for Pandy.
 
 GET  /health                   -> {"ok": true, "version": "..."}
+GET  /settings                 -> supported advanced process settings
 POST /slice?plate=1            body: the .3mf -> the sliced .gcode.3mf (headers X-Pandy-Result: JSON summary)
      &bed_type=<Bambu bed code> optionally overrides the selected plate's bed metadata before slicing
      &filament_type=PETG       plain models only (an STL): the filament's type, as Bambu's or a generic preset for the printer
      &filament_color=%23RRGGBB plain models only: its colour (the printer's default for the type when absent)
      &printer=<preset>         re-targets the project to that Bambu printer preset first ("Bambu Lab X1 Carbon 0.4 nozzle"),
                                keeping the designer's changed settings, as Bambu Studio's printer switch does
+     X-Pandy-Slicer-Settings   optional JSON object of validated global process overrides
 POST /slice?plate=1&upload=1   same, then puts the file on the printer over FTPS and answers JSON
                                {"path": "cache/<name>.gcode.3mf", "plate": 1, ...}; the printer's address, serial and
                                access code come in the X-Printer-Ip, X-Printer-Serial and X-Printer-Code headers.
@@ -21,6 +23,7 @@ import glob
 import hmac
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -31,6 +34,7 @@ import time
 import traceback
 import threading
 import zipfile
+import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -56,6 +60,152 @@ MAX_NOZZLE, MAX_BED, MAX_CHAMBER = 350, 120, 65
 MAX_CONNECTIONS = 4
 SLICE_TIMEOUT = int(os.environ.get("PANDY_SLICER_TIMEOUT", "900"))
 LOCK = threading.Lock()
+
+def number(group, key, label, unit, minimum, maximum, integer=False):
+    return {"group": group, "key": key, "label": label, "type": "integer" if integer else "number",
+            "unit": unit, "min": minimum, "max": maximum}
+
+
+def choice(group, key, label, *options):
+    return {"group": group, "key": key, "label": label, "type": "choice",
+            "options": [{"value": value, "label": text} for value, text in options]}
+
+
+SETTINGS = [
+    number("Quality", "layer_height", "Layer height", "mm", 0.05, 0.6),
+    number("Quality", "initial_layer_print_height", "First layer height", "mm", 0.05, 0.6),
+    choice("Quality", "seam_position", "Seam position", ("nearest", "Nearest"), ("aligned", "Aligned"), ("back", "Back"), ("random", "Random")),
+    choice("Quality", "ironing_type", "Ironing", ("no ironing", "Off"), ("top", "Top surfaces"), ("topmost", "Topmost surface"), ("solid", "All solid layers")),
+    number("Strength", "wall_loops", "Wall loops", "", 1, 20, True),
+    number("Strength", "top_shell_layers", "Top shell layers", "", 0, 20, True),
+    number("Strength", "bottom_shell_layers", "Bottom shell layers", "", 0, 20, True),
+    number("Strength", "sparse_infill_density", "Infill density", "%", 0, 100),
+    choice("Strength", "sparse_infill_pattern", "Infill pattern", ("grid", "Grid"), ("gyroid", "Gyroid"), ("cubic", "Cubic"),
+           ("line", "Line"), ("triangles", "Triangles"), ("tri-hexagon", "Tri-hexagon"), ("honeycomb", "Honeycomb"), ("adaptivecubic", "Adaptive cubic")),
+    choice("Support", "enable_support", "Generate support", ("1", "On"), ("0", "Off")),
+    choice("Support", "support_type", "Support type", ("normal(auto)", "Normal (automatic)"), ("tree(auto)", "Tree (automatic)"),
+           ("normal(manual)", "Normal (painted)"), ("tree(manual)", "Tree (painted)")),
+    number("Support", "support_threshold_angle", "Overhang threshold", "°", 0, 90, True),
+    number("Support", "support_top_z_distance", "Top Z distance", "mm", 0, 2),
+    choice("Adhesion", "brim_type", "Brim type", ("auto_brim", "Auto"), ("no_brim", "None"), ("outer_only", "Outer"),
+           ("inner_only", "Inner"), ("outer_and_inner", "Outer and inner")),
+    number("Adhesion", "brim_width", "Brim width", "mm", 0, 30),
+    number("Adhesion", "skirt_loops", "Skirt loops", "", 0, 10, True),
+    number("Adhesion", "skirt_distance", "Skirt distance", "mm", 0, 30),
+    number("Adhesion", "raft_layers", "Raft layers", "", 0, 10, True),
+    number("Speed", "initial_layer_speed", "First layer", "mm/s", 1, 150),
+    number("Speed", "outer_wall_speed", "Outer wall", "mm/s", 1, 300),
+    number("Speed", "inner_wall_speed", "Inner wall", "mm/s", 1, 500),
+    number("Speed", "sparse_infill_speed", "Infill", "mm/s", 1, 500),
+    number("Speed", "top_surface_speed", "Top surface", "mm/s", 1, 300),
+    number("Speed", "travel_speed", "Travel", "mm/s", 1, 500),
+]
+SETTINGS_BY_KEY = {item["key"]: item for item in SETTINGS}
+
+
+def parse_settings(raw):
+    if not raw:
+        return {}
+    if len(raw) > 4096:
+        raise ValueError("Slicer settings are too large")
+    try:
+        values = json.loads(raw)
+    except (ValueError, TypeError):
+        raise ValueError("Invalid slicer settings") from None
+    if not isinstance(values, dict):
+        raise ValueError("Slicer settings must be an object")
+    for key, value in values.items():
+        spec = SETTINGS_BY_KEY.get(key)
+        if not spec or not isinstance(value, str) or len(value) > 32:
+            raise ValueError("Unsupported slicer setting")
+        if spec["type"] == "choice":
+            if value not in {option["value"] for option in spec["options"]}:
+                raise ValueError(f"Invalid {spec['label']}")
+        else:
+            pattern = r"[0-9]+" if spec["type"] == "integer" else r"(?:[0-9]+(?:\.[0-9]{1,3})?|\.[0-9]{1,3})"
+            if not re.fullmatch(pattern, value) or not spec["min"] <= float(value) <= spec["max"]:
+                raise ValueError(f"{spec['label']} must be between {spec['min']} and {spec['max']} {spec['unit']}".strip())
+    return values
+
+
+def check_setting_scope(data, settings, target):
+    if not settings:
+        return
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        names = {name.lower(): name for name in z.namelist()}
+        if "metadata/slic3r_pe_model.config" in names:
+            raise RuntimeError("This model has third-party object settings that can't be checked. Reset the advanced settings or edit it in Bambu Studio.")
+        try:
+            model = ET.fromstring(z.read(names["metadata/model_settings.config"]))
+        except KeyError:
+            model = None
+        except ET.ParseError:
+            raise RuntimeError("Couldn't check the model's per-object settings") from None
+        conflicts = set()
+        if model is not None:
+            for obj in model.iter():
+                if obj.tag.split("}")[-1] not in ("object", "part", "volume"):
+                    continue
+                conflicts.update(node.get("key") for node in obj.iter()
+                                 if node.tag.split("}")[-1] == "metadata" and node.get("key") in settings)
+        if "layer_height" in settings and "metadata/layer_heights_profile.txt" in names:
+            conflicts.add("layer_height")
+        if "metadata/layer_config_ranges.xml" in names:
+            try:
+                ranges = ET.fromstring(z.read(names["metadata/layer_config_ranges.xml"]))
+            except ET.ParseError:
+                raise RuntimeError("Couldn't check the model's per-layer settings") from None
+            conflicts.update(node.get("opt_key") for node in ranges.iter() if node.get("opt_key") in settings)
+        if conflicts:
+            labels = ", ".join(SETTINGS_BY_KEY[key]["label"] for key in sorted(conflicts))
+            raise RuntimeError(f"This model has per-object settings for {labels}. Reset those changes or edit the model in Bambu Studio.")
+        layer_keys = {"layer_height", "initial_layer_print_height"} & settings.keys()
+        if layer_keys:
+            cfg = json.loads(z.read("Metadata/project_settings.config"))
+            machine = flatten_preset(PROFILES, target or cfg.get("printer_settings_id", ""))
+            for inc in machine.get("include", []):
+                try:
+                    with open(preset_path(PROFILES, inc) or os.devnull) as f:
+                        machine.update({k: v for k, v in json.load(f).items() if k in ("nozzle_diameter", "min_layer_height", "max_layer_height")})
+                except (OSError, ValueError):
+                    pass
+            if not target or target == cfg.get("printer_settings_id"):
+                for key in ("nozzle_diameter", "min_layer_height", "max_layer_height"):
+                    if not machine.get(key) and key in cfg:
+                        machine[key] = cfg[key]
+            def numbers(key):
+                raw = machine.get(key, [])
+                return [float(v) for v in (raw if isinstance(raw, list) else [raw])
+                        if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", str(v)) and float(v) > 0]
+            sizes = numbers("nozzle_diameter")
+            if not sizes:
+                raise RuntimeError("Couldn't determine the printer's nozzle size for the chosen layer height")
+            minimum = max(numbers("min_layer_height"), default=0)
+            maximum = min([min(sizes) * 0.8, *numbers("max_layer_height")])
+            for key in layer_keys:
+                if float(settings[key]) < minimum - 1e-9 or float(settings[key]) > maximum + 1e-9:
+                    raise RuntimeError(f"{SETTINGS_BY_KEY[key]['label']} must be between {minimum:g} and {maximum:g} mm for this nozzle")
+
+
+def check_applied_settings(data, settings):
+    if not settings:
+        return
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            cfg = json.loads(z.read("Metadata/project_settings.config"))
+        for key, wanted in settings.items():
+            actual = cfg.get(key)
+            values = actual if isinstance(actual, list) else [actual]
+            if not values or any(value is None for value in values):
+                raise ValueError(key)
+            if SETTINGS_BY_KEY[key]["type"] == "choice":
+                matches = all(str(value) == wanted for value in values)
+            else:
+                matches = all(math.isclose(float(str(value).removesuffix("%")), float(wanted), abs_tol=1e-6) for value in values)
+            if not matches:
+                raise ValueError(key)
+    except (KeyError, ValueError, TypeError, zipfile.BadZipFile):
+        raise RuntimeError("Bambu Studio did not apply all the requested slicer settings") from None
 
 
 def version():
@@ -313,8 +463,9 @@ def as_project(data: bytes, bed_type: str = "auto") -> bytes:
     return buf.getvalue()
 
 
-def slice_3mf(data: bytes, plate: int, target: str = "", bed_type: str = "auto", filament_type: str = "", filament_color: str = ""):
+def slice_3mf(data: bytes, plate: int, target: str = "", bed_type: str = "auto", filament_type: str = "", filament_color: str = "", settings=None):
     """Slices one plate (0 = all) and returns (sliced 3mf bytes, summary dict). Raises RuntimeError with Bambu's message."""
+    settings = parse_settings(json.dumps(settings)) if settings else {}
     check_zip(data)
     bare = bare_model(data)
     if bare:
@@ -327,12 +478,14 @@ def slice_3mf(data: bytes, plate: int, target: str = "", bed_type: str = "auto",
         out_dir = os.path.join(work, "out")
         os.makedirs(out_dir)
         source = set_bed_type(data, plate, bed_type)
+        check_setting_scope(source, settings, target)
         with open(src, "wb") as f:
             f.write(heal(source))
         out = os.path.join(out_dir, "sliced.gcode.3mf")
         # --export-3mf takes a bare name: Bambu Studio puts it in --outputdir.
         extra, converted_from = conversion(source, target, filament_type, filament_color)
-        cmd = [BAMBU, *extra, *(["--arrange", "1"] if bare else []), "--slice", str(plate), "--export-3mf", "sliced.gcode.3mf", "--outputdir", out_dir, "--uptodate", src]
+        overrides = [f"--{key.replace('_', '-')}={value}{'%' if SETTINGS_BY_KEY[key].get('unit') == '%' else ''}" for key, value in settings.items()]
+        cmd = [BAMBU, *extra, *overrides, *(["--arrange", "1"] if bare else []), "--slice", str(plate), "--export-3mf", "sliced.gcode.3mf", "--outputdir", out_dir, "--uptodate", src]
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=SLICE_TIMEOUT, cwd=work)
         result = {}
         rj = os.path.join(out_dir, "result.json")
@@ -346,7 +499,10 @@ def slice_3mf(data: bytes, plate: int, target: str = "", bed_type: str = "auto",
             sliced = f.read()
         sliced = keep_pictures(data, sliced)
         check_safe(sliced)
+        check_applied_settings(sliced, settings)
         info = summary(sliced, result)
+        if settings:
+            info["applied_settings"] = settings
         if converted_from:
             info["converted_from"] = converted_from
         return sliced, info
@@ -476,6 +632,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/health":
             if self._authorized():
                 self._json(200, {"ok": True, "version": VERSION})
+        elif path == "/settings":
+            if self._authorized():
+                self._json(200, {"version": 1, "settings": SETTINGS})
         else:
             self._json(404, {"error": "Not found"})
 
@@ -505,6 +664,10 @@ class Handler(BaseHTTPRequestHandler):
             plate = int(q.get("plate", "1"))
         except ValueError:
             return self._json(400, {"error": "Content-Length and plate must be numbers"})
+        try:
+            settings = parse_settings(self.headers.get("X-Pandy-Slicer-Settings", ""))
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
         if not 0 < length <= MAX_BYTES:
             return self._json(400, {"error": "Send the .3mf as the request body (up to 200 MB)"})
         # The lock comes before reading the body, so only one upload is ever held in memory.
@@ -515,7 +678,8 @@ class Handler(BaseHTTPRequestHandler):
             if not data.startswith(b"PK"):
                 return self._json(400, {"error": "That isn't a 3MF file"})
             started = time.monotonic()
-            sliced, info = slice_3mf(data, plate, q.get("printer", ""), q.get("bed_type", "auto"), q.get("filament_type", ""), q.get("filament_color", ""))
+            args = (data, plate, q.get("printer", ""), q.get("bed_type", "auto"), q.get("filament_type", ""), q.get("filament_color", ""))
+            sliced, info = slice_3mf(*args, settings=settings) if settings else slice_3mf(*args)
             print(f"Sliced {len(data) // 1024} KiB in {time.monotonic() - started:.0f} s")
         except subprocess.TimeoutExpired:
             return self._json(504, {"error": "Slicing took too long"})
