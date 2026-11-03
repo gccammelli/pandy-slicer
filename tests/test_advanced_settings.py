@@ -32,12 +32,17 @@ class AdvancedSettingsTest(unittest.TestCase):
                 json.dump({"nozzle_diameter": ["0.4"], "min_layer_height": ["0.08"], "max_layer_height": ["0.28"]}, out)
             with open(os.path.join(folder, "Included.json"), "w") as out:
                 json.dump({"include": ["Template"]}, out)
+            with open(os.path.join(folder, "Broken.json"), "w") as out:
+                json.dump({"include": ["Broken template"], "nozzle_diameter": ["0.4"]}, out)
+            with open(os.path.join(folder, "Broken template.json"), "w") as out:
+                out.write("not json")
             def project(model="<config/>", config='{"printer_settings_id":"Printer"}', **extra):
                 return zip_of({"Metadata/project_settings.config": config,
                                "Metadata/model_settings.config": model, **extra})
             with patch.object(server, "PROFILES", folder):
                 server.check_setting_scope(project(), {"layer_height": "0.12"}, "Printer")
                 server.check_setting_scope(project(), {"layer_height": "0.2"}, "Included")
+                server.check_setting_scope(project(), {"layer_height": "0.2"}, "Broken")
                 with self.assertRaisesRegex(RuntimeError, "between 0.08 and 0.14"):
                     server.check_setting_scope(project(), {"layer_height": "0.2"}, "Printer")
                 with self.assertRaisesRegex(RuntimeError, "between 0.08 and 0.14"):
@@ -56,6 +61,9 @@ class AdvancedSettingsTest(unittest.TestCase):
                                                {"layer_height": "0.1"}, "Printer")
                 with self.assertRaisesRegex(RuntimeError, "Wall loops"):
                     server.check_setting_scope(project(**{"Metadata/layer_config_ranges.xml": '<objects><object><range><option opt_key="wall_loops">5</option></range></object></objects>'}),
+                                               {"wall_loops": "3"}, "Printer")
+                with self.assertRaisesRegex(RuntimeError, "per-layer"):
+                    server.check_setting_scope(project(**{"Metadata/layer_config_ranges.xml": "<broken"}),
                                                {"wall_loops": "3"}, "Printer")
                 with self.assertRaisesRegex(RuntimeError, "per-object"):
                     server.check_setting_scope(project("<broken"), {"wall_loops": "3"}, "Printer")
