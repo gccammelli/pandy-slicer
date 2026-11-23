@@ -14,7 +14,7 @@ DOCKERFILE = f"{ROOT}/pandy_slicer/Dockerfile"
 CONFIG = f"{ROOT}/pandy_slicer/config.yaml"
 CHANGELOG = f"{ROOT}/pandy_slicer/CHANGELOG.md"
 # The add-on's base image is Ubuntu 24.04: its AppImage is the one that runs there.
-ASSET = re.compile(r"BambuStudio_ubuntu24\.04-v[\d.]+-\d+\.AppImage")
+ASSET = re.compile(r"BambuStudio_(?:ubuntu24\.04|ubu24)[-_]v[\d.]+-\d+\.AppImage")
 
 
 def latest(path):
@@ -34,7 +34,7 @@ def main():
     if release.get("draft") or release.get("prerelease"):
         return
     version = release["tag_name"].lstrip("v")
-    asset = next((a for a in release.get("assets", []) if ASSET.fullmatch(a["name"]) and f"-v{version}-" in a["name"]), None)
+    asset = next((a for a in release.get("assets", []) if ASSET.fullmatch(a["name"]) and f"v{version}-" in a["name"]), None)
     docker = open(DOCKERFILE).read()
     current = re.search(r"^ARG BAMBU_VERSION=(\S+)$", docker, re.M).group(1)
     if numbers(version) <= numbers(current):

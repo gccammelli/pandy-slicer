@@ -33,6 +33,13 @@ class BambuUpdateTest(unittest.TestCase):
         self.assertIn("ARG BAMBU_SHA256=" + "ab" * 32, read("Dockerfile"))
         self.assertIn("- Bambu Studio 99.00.00.01.", read("CHANGELOG.md"))
 
+    def test_accepts_the_short_ubu24_asset_name(self):
+        p, read = self.run_with({"tag_name": "v99.00.00.01", "assets": [
+            {"name": "BambuStudio_ubu22_v99.00.00.01-20990101000000.AppImage", "digest": "sha256:" + "cd" * 32},
+            {"name": "BambuStudio_ubu24-v99.00.00.01-20990101000000.AppImage", "digest": "sha256:" + "ab" * 32}]})
+        self.assertEqual(0, p.returncode, p.stderr)
+        self.assertIn("ARG BAMBU_ASSET=BambuStudio_ubu24-v99.00.00.01-20990101000000.AppImage", read("Dockerfile"))
+
     def test_fails_without_a_digest_to_pin(self):
         p, _ = self.run_with({"tag_name": "v99.00.00.01", "assets": [
             {"name": "BambuStudio_ubuntu24.04-v99.00.00.01-20990101000000.AppImage"}]})
