@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.2
+
+- Bambu Studio 02.09.01.70.
+
 ## 1.5.1
 
 - The "line" infill pattern is now labelled "Rectilinear", the name Bambu Studio uses.

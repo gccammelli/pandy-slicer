@@ -3,10 +3,10 @@
 # The base is fixed here (not Home Assistant's BUILD_FROM): Bambu Studio's AppImage needs a glibc distribution.
 FROM ubuntu:26.04
 
-ARG BAMBU_VERSION=02.08.02.61
-ARG BAMBU_ASSET=BambuStudio_ubuntu24.04-v02.08.02.61-20260820225108.AppImage
+ARG BAMBU_VERSION=02.09.01.70
+ARG BAMBU_ASSET=BambuStudio_ubu24-v02.09.01.70-20261103183404.AppImage
 # The asset's SHA-256 as GitHub reports it (the release API's "digest"): a swapped download fails the build.
-ARG BAMBU_SHA256=d501b103fac5424513ec0e8d6bc145fb30719de2c7d94d7320d723740c81a7fd
+ARG BAMBU_SHA256=668dabb1be53c758189ed6bc89935285dea5e0af46216546b1bafd6882e9aff0
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates curl python3 \
