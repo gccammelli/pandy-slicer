@@ -220,6 +220,9 @@ def version():
 BBL = os.path.join(os.path.dirname(BAMBU), "resources", "profiles", "BBL")
 PROFILES = os.path.join(BBL, "machine")
 GCODE_KEYS = ("machine_start_gcode", "machine_end_gcode", "change_filament_gcode", "layer_change_gcode", "time_lapse_gcode")
+PRESET_META = frozenset({"name", "inherits", "from", "instantiation", "setting_id", "type", "include", "renamed_from",
+                         "compatible_printers", "compatible_printers_condition", "filament_id"})
+BLOCKED_OPTIONS = frozenset({"post_process", "filename_format", "gcode_substitutions"})
 
 
 def preset_path(folder: str, name: str):
@@ -267,6 +270,81 @@ def flatten_preset(folder: str, name: str, depth: int = 0) -> dict:
         d = json.load(f)
     merged = flatten_preset(folder, d.get("inherits", ""), depth + 1)
     merged.update({k: v for k, v in d.items() if k != "inherits"})
+    return merged
+
+
+def flatten_preset_full(folder: str, name: str, depth: int = 0) -> dict:
+    """A preset with both its `inherits` chain and `include` templates merged in."""
+    path = preset_path(folder, name)
+    if not path or depth > 6:
+        return {}
+    try:
+        with open(path) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    merged = flatten_preset_full(folder, d.get("inherits", ""), depth + 1)
+    for inc in d.get("include", []) if isinstance(d.get("include"), list) else []:
+        if isinstance(inc, str):
+            merged.update({k: v for k, v in flatten_preset_full(folder, inc, depth + 1).items() if k not in ("name", "instantiation")})
+    merged.update({k: v for k, v in d.items() if k not in ("inherits", "include")})
+    return merged
+
+
+def complete_project_settings(cfg: dict) -> dict:
+    """Backfills missing base preset keys in minimal/hand-crafted Bambu 3MF projects (which name presets but omit
+    required keys like nozzle_diameter, printable_height or filament_ids, crashing Bambu Studio's CLI)."""
+    machine_name = cfg.get("printer_settings_id") if isinstance(cfg.get("printer_settings_id"), str) else ""
+    if not machine_name or not preset_path(PROFILES, machine_name):
+        return cfg
+    raw_filaments = cfg.get("filament_settings_id")
+    filament_names = [f if isinstance(f, str) else "" for f in raw_filaments] if isinstance(raw_filaments, list) else []
+    incomplete = ("nozzle_diameter" not in cfg or "printable_height" not in cfg or "printable_area" not in cfg
+                  or (bool(filament_names) and "filament_ids" not in cfg))
+    if not incomplete:
+        return cfg
+    merged = {}
+    machine = flatten_preset_full(PROFILES, machine_name)
+    merged.update({k: v for k, v in machine.items() if k not in PRESET_META and k not in BLOCKED_OPTIONS})
+    process_name = cfg.get("print_settings_id") if isinstance(cfg.get("print_settings_id"), str) and cfg.get("print_settings_id") else machine.get("default_print_profile", "")
+    process = flatten_preset_full(os.path.join(BBL, "process"), process_name) if isinstance(process_name, str) and process_name else {}
+    merged.update({k: v for k, v in process.items() if k not in PRESET_META and k not in BLOCKED_OPTIONS})
+    filaments = [flatten_preset_full(os.path.join(BBL, "filament"), name) if name else {} for name in filament_names]
+    if any(filaments):
+        keys = []
+        seen = set()
+        for f in filaments:
+            for k in f:
+                if k not in PRESET_META and k not in BLOCKED_OPTIONS and k not in seen:
+                    seen.add(k)
+                    keys.append(k)
+        for k in keys:
+            sample = next((f[k] for f in filaments if f.get(k) is not None), None)
+            if sample is None:
+                continue
+            if isinstance(sample, list):
+                fallback = next((item for item in sample if item is not None), "")
+                vals = []
+                for f in filaments:
+                    v = f.get(k)
+                    if isinstance(v, list):
+                        vals.append(next((item for item in v if item is not None), fallback))
+                    elif v is None:
+                        vals.append(fallback)
+                    else:
+                        vals.append(v)
+                merged[k] = vals
+            else:
+                merged[k] = sample
+        merged["filament_ids"] = [f.get("filament_id", "") if isinstance(f.get("filament_id"), str) else "" for f in filaments]
+    merged.update(cfg)
+    if "different_settings_to_system" not in cfg and process:
+        diffs = sorted(k for k in cfg if k not in PRESET_META and k not in BLOCKED_OPTIONS and k in process and cfg[k] != process[k])
+        if diffs:
+            merged["different_settings_to_system"] = [";".join(diffs), *("" for _ in range(len(filament_names) + 1))]
+    still_missing = [k for k in ("nozzle_diameter", "printable_height", "printable_area") if k not in merged]
+    if still_missing:
+        print(f"Warning: project settings for '{machine_name}' still missing {', '.join(still_missing)} after backfill")
     return merged
 
 
@@ -342,25 +420,32 @@ def conversion(data: bytes, target: str, filament_type: str = "", filament_color
 
 
 def heal(data: bytes) -> bytes:
-    """Replaces a project's printer G-codes (start, end, filament change…) with its system printer preset's. A project
-    from the internet is untrusted, and these templates run as-is on the printer; projects built on the command line
-    from stock presets also miss them, and printing without start G-code skips homing, leveling and the purge line.
-    Projects on a printer preset Bambu Studio doesn't have keep theirs, and [check_safe] still checks the result."""
+    """Backfills minimal project settings and replaces a project's printer G-codes (start, end, filament change…)
+    with its system printer preset's. A project from the internet is untrusted, and these templates run as-is on the
+    printer; projects built on the command line or by scripts also miss base settings or start G-code, and printing
+    without start G-code skips homing, leveling and the purge line. Projects on a printer preset Bambu Studio doesn't
+    have keep theirs, and [check_safe] still checks the result."""
     z = zipfile.ZipFile(io.BytesIO(data))
     try:
         cfg = json.loads(z.read("Metadata/project_settings.config"))
     except (KeyError, ValueError):
         return data
-    fill = system_gcodes(cfg.get("printer_settings_id", ""))
-    changed = {k: fill[k] for k in GCODE_KEYS if fill.get(k) and cfg.get(k) != fill[k]}
-    if not changed:
+    if not isinstance(cfg, dict):
         return data
-    print(f"Used the system {', '.join(changed)} of '{cfg.get('printer_settings_id')}'")
-    cfg.update(changed)
+    updated = complete_project_settings(cfg)
+    if updated != cfg:
+        print(f"Backfilled missing base settings for '{updated.get('printer_settings_id')}'")
+    fill = system_gcodes(updated.get("printer_settings_id", ""))
+    changed = {k: fill[k] for k in GCODE_KEYS if fill.get(k) and updated.get(k) != fill[k]}
+    if changed:
+        print(f"Used the system {', '.join(changed)} of '{updated.get('printer_settings_id')}'")
+        updated = {**updated, **changed}
+    if updated == cfg:
+        return data
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as out:
         for info in z.infolist():
-            body = json.dumps(cfg, indent=4).encode() if info.filename == "Metadata/project_settings.config" else z.read(info.filename)
+            body = json.dumps(updated, indent=4).encode() if info.filename == "Metadata/project_settings.config" else z.read(info.filename)
             out.writestr(info, body)
     return buf.getvalue()
 
@@ -479,11 +564,12 @@ def slice_3mf(data: bytes, plate: int, target: str = "", bed_type: str = "auto",
         os.makedirs(out_dir)
         source = set_bed_type(data, plate, bed_type)
         check_setting_scope(source, settings, target)
+        healed = heal(source)
         with open(src, "wb") as f:
-            f.write(heal(source))
+            f.write(healed)
         out = os.path.join(out_dir, "sliced.gcode.3mf")
         # --export-3mf takes a bare name: Bambu Studio puts it in --outputdir.
-        extra, converted_from = conversion(source, target, filament_type, filament_color)
+        extra, converted_from = conversion(healed, target, filament_type, filament_color)
         overrides = [f"--{key.replace('_', '-')}={value}{'%' if SETTINGS_BY_KEY[key].get('unit') == '%' else ''}" for key, value in settings.items()]
         cmd = [BAMBU, *extra, *overrides, *(["--arrange", "1"] if bare else []), "--slice", str(plate), "--export-3mf", "sliced.gcode.3mf", "--outputdir", out_dir, "--uptodate", src]
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=SLICE_TIMEOUT, cwd=work)

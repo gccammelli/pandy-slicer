@@ -151,6 +151,69 @@ class PresetsTest(unittest.TestCase):
         self.assertEqual(([], None), server.conversion(self.project(printer_settings_id="Bambu Lab X1 Carbon 0.4 nozzle"),
                                                        "Bambu Lab X1 Carbon 0.4 nozzle"))
 
+    def test_minimal_project_backfills_missing_base_preset_keys_and_preserves_overrides(self):
+        with open(os.path.join(server.PROFILES, "base.json"), "w") as f:
+            json.dump({"name": "base", "printable_area": ["0x0", "256x0", "256x256", "0x256"], "printable_height": "256"}, f)
+        with open(os.path.join(server.PROFILES, "Bambu Lab X1 Carbon 0.4 nozzle.json"), "w") as f:
+            json.dump({"name": "Bambu Lab X1 Carbon 0.4 nozzle", "inherits": "base", "include": ["X1C start"],
+                       "default_print_profile": "0.20mm Standard @BBL X1C", "nozzle_diameter": ["0.4"]}, f)
+        with open(os.path.join(server.BBL, "process", "0.20mm Standard @BBL X1C.json"), "w") as f:
+            json.dump({"name": "0.20mm Standard @BBL X1C", "wall_loops": "2", "sparse_infill_pattern": "grid", "layer_height": "0.20"}, f)
+        with open(os.path.join(server.BBL, "filament", "Bambu PLA Basic @BBL X1C.json"), "w") as f:
+            json.dump({"name": "Bambu PLA Basic @BBL X1C", "inherits": "Bambu PLA Basic @base", "filament_id": "GFA00",
+                       "filament_flow_ratio": ["0.98", "0.98"]}, f)
+        minimal = self.project(
+            printer_settings_id="Bambu Lab X1 Carbon 0.4 nozzle",
+            print_settings_id="0.20mm Standard @BBL X1C",
+            filament_settings_id=["Bambu PLA Basic @BBL X1C"],
+            filament_colour=["#F2C81E"],
+            wall_loops="3",
+            sparse_infill_pattern="gyroid",
+        )
+        healed = server.heal(minimal)
+        cfg = json.loads(zipfile.ZipFile(io.BytesIO(healed)).read("Metadata/project_settings.config"))
+        self.assertEqual(["0.4"], cfg["nozzle_diameter"])
+        self.assertEqual("256", cfg["printable_height"])
+        self.assertEqual(["GFA00"], cfg["filament_ids"])
+        self.assertEqual(["0.98"], cfg["filament_flow_ratio"])
+        self.assertEqual(["1.26"], cfg["filament_density"])
+        self.assertEqual("3", cfg["wall_loops"])
+        self.assertEqual("gyroid", cfg["sparse_infill_pattern"])
+        self.assertEqual("0.20", cfg["layer_height"])
+        self.assertEqual(["#F2C81E"], cfg["filament_colour"])
+        self.assertIn("M1002", cfg["machine_start_gcode"])
+        self.assertNotIn("inherits", cfg)
+        self.assertNotIn("filament_id", cfg)
+        self.assertEqual("sparse_infill_pattern;wall_loops", cfg["different_settings_to_system"][0])
+
+        # Multi-filament minimal project preserves per-slot array lengths.
+        with open(os.path.join(server.BBL, "filament", "Bambu PETG Basic @BBL X1C.json"), "w") as f:
+            json.dump({"name": "Bambu PETG Basic @BBL X1C", "filament_id": "GFG02", "filament_type": ["PETG"],
+                       "filament_flow_ratio": ["0.95", "0.95"]}, f)
+        multi = self.project(
+            printer_settings_id="Bambu Lab X1 Carbon 0.4 nozzle",
+            print_settings_id="0.20mm Standard @BBL X1C",
+            filament_settings_id=["Bambu PLA Basic @BBL X1C", "Bambu PETG Basic @BBL X1C"],
+            wall_loops="3",
+        )
+        multi_cfg = json.loads(zipfile.ZipFile(io.BytesIO(server.heal(multi))).read("Metadata/project_settings.config"))
+        self.assertEqual(["GFA00", "GFG02"], multi_cfg["filament_ids"])
+        self.assertEqual(["0.98", "0.95"], multi_cfg["filament_flow_ratio"])
+        self.assertEqual(["wall_loops", "", "", ""], multi_cfg["different_settings_to_system"])
+
+        # Complete project with system start G-code round-trips byte-identically through heal().
+        complete = self.project(
+            printer_settings_id="Bambu Lab X1 Carbon 0.4 nozzle",
+            print_settings_id="0.20mm Standard @BBL X1C",
+            filament_settings_id=["Bambu PLA Basic @BBL X1C"],
+            nozzle_diameter=["0.4"],
+            printable_height="256",
+            printable_area=["0x0", "256x0", "256x256", "0x256"],
+            filament_ids=["GFA00"],
+            machine_start_gcode=START * 10,
+        )
+        self.assertEqual(complete, server.heal(complete))
+
 
 class PicturesTest(unittest.TestCase):
     def test_keeps_the_projects_plate_pictures(self):
