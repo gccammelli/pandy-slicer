@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.3
+
+- Minimal or script-generated 3MF projects that name Bambu presets in `project_settings.config` without carrying every
+  base key (`nozzle_diameter`, `printable_height`, `printable_area`, `filament_ids`) no longer crash Bambu Studio. Missing
+  base preset keys are filled in from the named system presets while keeping all project overrides.
+
 ## 1.5.2
 
 - Bambu Studio 02.09.01.70.
